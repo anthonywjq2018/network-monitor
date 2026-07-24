@@ -1,0 +1,436 @@
+{% extends "base.html" %}
+
+{% block title %}端口管理 - 网络设备监控系统{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+    <div>
+        <h1><i class="bi bi-ethernet me-2"></i>端口管理</h1>
+        <p>查看和管理网络设备端口状态，支持本地描述和备注（仅保存到数据库，不同步到交换机）</p>
+    </div>
+    <div>
+        <button class="btn btn-outline-primary" onclick="refreshPorts()">
+            <i class="bi bi-refresh me-2"></i>刷新
+        </button>
+    </div>
+</div>
+
+<!-- 筛选栏 -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">设备</label>
+                <select name="device_id" class="form-select" onchange="this.form.submit()">
+                    <option value="">全部设备</option>
+                    {% for device in devices %}
+                    <option value="{{ device.id }}" {% if current_device == device.id %}selected{% endif %}>
+                        {{ device.name }} ({{ device.ip_address }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">运行状态</label>
+                <select name="status" class="form-select" onchange="this.form.submit()">
+                    <option value="">全部状态</option>
+                    {% for key, info in port_status.items() %}
+                    <option value="{{ key }}" {% if current_status == key %}selected{% endif %}>
+                        {{ info.label }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">搜索端口名</label>
+                <input type="text" name="search" class="form-control" value="{{ current_search }}" placeholder="输入端口名称关键词">
+            </div>
+            <div class="col-md-4 d-flex align-items-end gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-search me-1"></i>搜索
+                </button>
+                <button type="button" class="btn btn-outline-secondary" onclick="location.href='{{ url_for('ports') }}'">
+                    <i class="bi bi-x-lg me-1"></i>清除
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 端口列表 -->
+<div class="card">
+    <div class="card-header bg-white border-0 pt-3 px-4 d-flex justify-content-between align-items-center">
+        <h5 class="card-title mb-0">
+            端口列表
+            <span class="badge bg-primary ms-2">{{ ports|length }}</span>
+        </h5>
+        <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            本地描述/备注仅保存在系统数据库，不会同步到交换机设备
+        </small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" id="portsTable">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 120px;">设备</th>
+                        <th style="width: 150px;">端口名称</th>
+                        <th style="width: 80px;">类型</th>
+                        <th style="width: 100px;">速率</th>
+                        <th style="width: 90px;">管理状态</th>
+                        <th style="width: 90px;">运行状态</th>
+                        <th style="width: 150px;">设备描述</th>
+                        <th style="width: 150px;">本地描述</th>
+                        <th style="width: 200px;">本地备注</th>
+                        <th style="width: 100px;">入流量</th>
+                        <th style="width: 100px;">出流量</th>
+                        <th style="width: 60px;">错误</th>
+                        <th style="width: 80px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for port in ports %}
+                    <tr data-port-id="{{ port.id }}" data-device-name="{{ port.device_name }}">
+                        <td>
+                            <a href="{{ url_for('devices') }}" class="text-decoration-none fw-medium">
+                                {{ port.device_name }}
+                            </a>
+                            <br><small class="text-muted">{{ port.device_ip }}</small>
+                        </td>
+                        <td>
+                            <strong>{{ port.port_name }}</strong>
+                            {% if port.port_index %}
+                            <br><small class="text-muted">索引: {{ port.port_index }}</small>
+                            {% endif %}
+                        </td>
+                        <td>{{ port.port_type or '-' }}</td>
+                        <td>{{ port.speed or '-' }}</td>
+                        <td>
+                            <span class="badge {% if port.admin_status == 'up' %}bg-success{% elif port.admin_status == 'down' %}bg-warning{% else %}bg-secondary{% endif %}">
+                                {{ port_status[port.admin_status].label if port.admin_status in port_status else port.admin_status }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge {% if port.oper_status == 'up' %}bg-success{% elif port.oper_status == 'down' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                {{ port_status[port.oper_status].label if port.oper_status in port_status else port.oper_status }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if port.description %}
+                                <span title="{{ port.description }}">
+                                    {% if port.description|length > 25 %}
+                                        {{ port.description[:25] }}...
+                                    {% else %}
+                                        {{ port.description }}
+                                    {% endif %}
+                                </span>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if port.local_description %}
+                                <span class="text-primary" title="{{ port.local_description }}">
+                                    {% if port.local_description|length > 20 %}
+                                        {{ port.local_description[:20] }}...
+                                    {% else %}
+                                        {{ port.local_description }}
+                                    {% endif %}
+                                </span>
+                            {% else %}
+                                <span class="text-muted fst-italic">未设置</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if port.local_notes %}
+                                <span class="text-info" title="{{ port.local_notes }}">
+                                    {% if port.local_notes|length > 30 %}
+                                        {{ port.local_notes[:30] }}...
+                                    {% else %}
+                                        {{ port.local_notes }}
+                                    {% endif %}
+                                </span>
+                            {% else %}
+                                <span class="text-muted fst-italic">未设置</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if port.in_rate %}
+                                <span class="text-success">{{ format_speed(port.in_rate) }}</span>
+                            {% elif port.in_octets %}
+                                <small class="text-muted">{{ format_bytes(port.in_octets) }}</small>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if port.out_rate %}
+                                <span class="text-primary">{{ format_speed(port.out_rate) }}</span>
+                            {% elif port.out_octets %}
+                                <small class="text-muted">{{ format_bytes(port.out_octets) }}</small>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set total_errors = (port.in_errors or 0) + (port.out_errors or 0) %}
+                            {% if total_errors > 0 %}
+                                <span class="badge bg-warning">{{ total_errors }}</span>
+                            {% else %}
+                                <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary" onclick="openEditModal({{ port.id }})" title="编辑本地描述/备注">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="13" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                            暂无端口数据，请先添加设备并检查
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑端口本地描述/备注模态框 -->
+<div class="modal fade" id="editPortModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-pencil-square me-2"></i>编辑端口本地信息
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info mb-3">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <strong>注意：</strong>本地描述和备注仅保存在监控系统数据库中，不会同步到交换机设备。这用于运维人员标注端口用途、连接信息等。
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label class="form-label fw-bold">设备名称</label>
+                            <input type="text" class="form-control" id="editDeviceName" readonly>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label class="form-label fw-bold">端口名称</label>
+                            <input type="text" class="form-control" id="editPortName" readonly>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label class="form-label fw-bold">当前运行状态</label>
+                            <input type="text" class="form-control" id="editPortStatus" readonly>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label class="form-label fw-bold">设备原描述</label>
+                            <input type="text" class="form-control" id="editOriginalDesc" readonly>
+                        </div>
+                    </div>
+                </div>
+                
+                <hr>
+                
+                <div class="form-group mb-3">
+                    <label class="form-label fw-bold">
+                        <i class="bi bi-tag me-1"></i>本地描述
+                    </label>
+                    <input type="text" class="form-control" id="editLocalDescription" 
+                           placeholder="输入端口用途描述，如：核心交换机上行口、服务器接入等"
+                           maxlength="100">
+                    <small class="text-muted">用于标注端口用途，方便运维人员快速识别</small>
+                </div>
+                
+                <div class="form-group mb-3">
+                    <label class="form-label fw-bold">
+                        <i class="bi bi-sticky me-1"></i>本地备注
+                    </label>
+                    <textarea class="form-control" id="editLocalNotes" rows="4"
+                              placeholder="输入详细备注信息，如：连接设备IP、责任人、变更记录等"
+                              maxlength="500"></textarea>
+                    <small class="text-muted">用于记录详细运维信息，如连接目标、责任人等</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-lg me-1"></i>取消
+                </button>
+                <button type="button" class="btn btn-outline-danger" onclick="clearPortInfo()">
+                    <i class="bi bi-eraser me-1"></i>清空
+                </button>
+                <button type="button" class="btn btn-primary" onclick="savePortInfo()">
+                    <i class="bi bi-check-lg me-1"></i>保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 当前编辑的端口ID
+let currentEditPortId = null;
+
+// 格式化字节
+function format_bytes(bytes) {
+    if (!bytes || bytes === 0) return '-';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    while (bytes >= 1024 && i < units.length - 1) {
+        bytes /= 1024;
+        i++;
+    }
+    return bytes.toFixed(1) + ' ' + units[i];
+}
+
+// 格式化速率 (bps)
+function format_speed(bps) {
+    if (!bps || bps === 0) return '-';
+    const units = ['bps', 'Kbps', 'Mbps', 'Gbps'];
+    let i = 0;
+    while (bps >= 1000 && i < units.length - 1) {
+        bps /= 1000;
+        i++;
+    }
+    return bps.toFixed(1) + ' ' + units[i];
+}
+
+// 打开编辑模态框
+function openEditModal(portId) {
+    currentEditPortId = portId;
+    
+    // 获取端口详情
+    fetch(`/api/ports/${portId}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                const port = data.port;
+                
+                // 填充只读信息
+                document.getElementById('editDeviceName').value = port.device_name || '';
+                document.getElementById('editPortName').value = port.port_name || '';
+                
+                // 状态显示
+                const statusText = port.oper_status === 'up' ? 'Up (正常运行)' : 
+                                   port.oper_status === 'down' ? 'Down (链路断开)' : 
+                                   port.admin_status === 'down' ? 'Admin Down (管理关闭)' : 'Unknown';
+                document.getElementById('editPortStatus').value = statusText;
+                
+                // 设备原描述
+                document.getElementById('editOriginalDesc').value = port.description || '无';
+                
+                // 可编辑字段
+                document.getElementById('editLocalDescription').value = port.local_description || '';
+                document.getElementById('editLocalNotes').value = port.local_notes || '';
+                
+                // 显示模态框
+                const modal = new bootstrap.Modal(document.getElementById('editPortModal'));
+                modal.show();
+            } else {
+                alert('获取端口信息失败: ' + data.message);
+            }
+        })
+        .catch(err => {
+            alert('请求失败: ' + err);
+        });
+}
+
+// 清空本地信息
+function clearPortInfo() {
+    document.getElementById('editLocalDescription').value = '';
+    document.getElementById('editLocalNotes').value = '';
+}
+
+// 保存端口信息
+function savePortInfo() {
+    if (!currentEditPortId) {
+        alert('请先选择端口');
+        return;
+    }
+    
+    const localDescription = document.getElementById('editLocalDescription').value.trim();
+    const localNotes = document.getElementById('editLocalNotes').value.trim();
+    
+    fetch(`/api/ports/${currentEditPortId}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            local_description: localDescription,
+            local_notes: localNotes
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            // 关闭模态框
+            bootstrap.Modal.getInstance(document.getElementById('editPortModal')).hide();
+            
+            // 显示成功提示
+            showToast('保存成功', '端口本地信息已保存（仅保存在数据库，不同步到交换机）', 'success');
+            
+            // 刷新页面
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            alert('保存失败: ' + data.message);
+        }
+    })
+    .catch(err => {
+        alert('请求失败: ' + err);
+    });
+}
+
+// 显示提示消息
+function showToast(title, message, type) {
+    // 创建 toast 元素
+    const toastHtml = `
+        <div class="toast align-items-center text-white bg-${type === 'success' ? 'success' : 'danger'} border-0" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <strong>${title}</strong><br>${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+            </div>
+        </div>
+    `;
+    
+    // 添加到容器
+    let container = document.querySelector('.toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.className = 'toast-container position-fixed top-0 end-0 p-3';
+        document.body.appendChild(container);
+    }
+    
+    container.innerHTML = toastHtml;
+    const toast = new bootstrap.Toast(container.querySelector('.toast'));
+    toast.show();
+}
+
+// 刷新端口列表
+function refreshPorts() {
+    location.reload();
+}
+</script>
+{% endblock %}

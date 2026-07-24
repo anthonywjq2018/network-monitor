@@ -1,0 +1,710 @@
+{% extends "base.html" %}
+
+{% block title %}配置备份 - 网络设备监控系统{% endblock %}
+
+{% block extra_css %}
+<style>
+    .backup-card {
+        border-radius: 8px;
+        transition: all 0.2s;
+    }
+    .backup-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .diff-add {
+        background: #d4edda;
+        color: #155724;
+    }
+    .diff-remove {
+        background: #f8d7da;
+        color: #721c24;
+    }
+    .diff-line {
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 12px;
+        padding: 2px 5px;
+        white-space: pre;
+    }
+    .backup-timeline {
+        position: relative;
+        padding-left: 30px;
+    }
+    .backup-timeline::before {
+        content: '';
+        position: absolute;
+        left: 10px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #dee2e6;
+    }
+    .backup-timeline-item {
+        position: relative;
+        padding: 10px 0;
+    }
+    .backup-timeline-item::before {
+        content: '';
+        position: absolute;
+        left: -24px;
+        top: 15px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #007bff;
+        border: 2px solid white;
+    }
+    .config-viewer {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 15px;
+        border-radius: 8px;
+        max-height: 500px;
+        overflow: auto;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 13px;
+        line-height: 1.5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <h4><i class="fas fa-save"></i> 配置备份</h4>
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary" onclick="showBackupAllModal()">
+                <i class="fas fa-cloud-upload-alt"></i> 一键备份
+            </button>
+            <button class="btn btn-success" onclick="showScheduleModal()">
+                <i class="fas fa-clock"></i> 定时备份
+            </button>
+        </div>
+    </div>
+    
+    <!-- 备份统计 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card backup-card">
+                <div class="card-body text-center">
+                    <i class="fas fa-hdd fa-2x text-primary mb-2"></i>
+                    <div class="h4 mb-0" id="totalDevices">0</div>
+                    <div class="text-muted small">已配置设备</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card backup-card">
+                <div class="card-body text-center">
+                    <i class="fas fa-archive fa-2x text-success mb-2"></i>
+                    <div class="h4 mb-0" id="totalBackups">0</div>
+                    <div class="text-muted small">备份总数</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card backup-card">
+                <div class="card-body text-center">
+                    <i class="fas fa-clock fa-2x text-info mb-2"></i>
+                    <div class="h4 mb-0" id="lastBackupTime">-</div>
+                    <div class="text-muted small">最近备份</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card backup-card">
+                <div class="card-body text-center">
+                    <i class="fas fa-exclamation-circle fa-2x text-warning mb-2"></i>
+                    <div class="h4 mb-0" id="configChanges">0</div>
+                    <div class="text-muted small">配置变更</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 设备备份列表 -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="fas fa-list"></i> 设备备份管理</h6>
+            <div>
+                <input type="text" class="form-control form-control-sm d-inline-block" 
+                       id="searchInput" placeholder="搜索设备..." 
+                       style="width: 200px;" onkeyup="filterDevices()">
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th width="30">
+                                <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                            </th>
+                            <th>设备名称</th>
+                            <th>IP 地址</th>
+                            <th>厂商</th>
+                            <th>备份状态</th>
+                            <th>最近备份</th>
+                            <th>备份版本数</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="backupList">
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">
+                                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 备份历史模态框 -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">备份历史 - <span id="historyDeviceName"></span></h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="backup-timeline" id="backupTimeline">
+                    <!-- 动态填充 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 查看配置模态框 -->
+<div class="modal fade" id="configModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">配置查看 - <span id="configDeviceName"></span></h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <select class="form-control" id="backupVersionSelect" onchange="loadConfigVersion()">
+                            <option value="">选择备份版本</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 text-right">
+                        <button class="btn btn-outline-primary btn-sm" onclick="downloadConfig()">
+                            <i class="fas fa-download"></i> 下载
+                        </button>
+                        <button class="btn btn-outline-success btn-sm" onclick="copyConfig()">
+                            <i class="fas fa-copy"></i> 复制
+                        </button>
+                    </div>
+                </div>
+                <div class="config-viewer" id="configContent">
+                    选择备份版本查看配置内容
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 配置对比模态框 -->
+<div class="modal fade" id="diffModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">配置对比 - <span id="diffDeviceName"></span></h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="row mb-3">
+                    <div class="col-md-5">
+                        <label>旧版本</label>
+                        <select class="form-control" id="oldVersionSelect" onchange="compareConfigs()">
+                            <option value="">选择旧版本</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 text-center d-flex align-items-end justify-content-center">
+                        <i class="fas fa-arrows-alt-h fa-2x text-muted"></i>
+                    </div>
+                    <div class="col-md-5">
+                        <label>新版本</label>
+                        <select class="form-control" id="newVersionSelect" onchange="compareConfigs()">
+                            <option value="">选择新版本</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="diffContent" class="config-viewer">
+                    选择两个版本进行对比
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 一键备份模态框 -->
+<div class="modal fade" id="backupAllModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">一键备份</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>将对所有设备执行配置备份，确认继续？</p>
+                <div class="form-group">
+                    <label>备份类型</label>
+                    <select class="form-control" id="backupType">
+                        <option value="full">完整备份</option>
+                        <option value="incremental">增量备份</option>
+                    </select>
+                </div>
+                <div id="backupProgress" style="display:none;">
+                    <div class="progress">
+                        <div class="progress-bar" id="backupProgressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="mt-2" id="backupStatus"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="startBackupBtn" onclick="startBackupAll()">
+                    开始备份
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 定时备份模态框 -->
+<div class="modal fade" id="scheduleModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">定时备份设置</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>备份周期</label>
+                    <select class="form-control" id="scheduleInterval">
+                        <option value="daily">每天</option>
+                        <option value="weekly">每周</option>
+                        <option value="monthly">每月</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>备份时间</label>
+                    <input type="time" class="form-control" id="scheduleTime" value="02:00">
+                </div>
+                <div class="form-group">
+                    <label>保留备份数</label>
+                    <input type="number" class="form-control" id="retentionCount" value="10" min="1" max="100">
+                    <small class="text-muted">超过此数量的旧备份将自动删除</small>
+                </div>
+                <div class="form-group">
+                    <div class="custom-control custom-checkbox">
+                        <input type="checkbox" class="custom-control-input" id="notifyOnChange" checked>
+                        <label class="custom-control-label" for="notifyOnChange">配置变更时通知</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveSchedule()">保存设置</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let backupData = [];
+    let currentDeviceId = null;
+    
+    // 加载备份数据
+    function loadBackupData() {
+        fetch('/api/backups')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    backupData = data.devices || [];
+                    updateStats(data);
+                    updateBackupList();
+                }
+            })
+            .catch(err => {
+                console.error('加载备份数据失败:', err);
+            });
+    }
+    
+    // 更新统计
+    function updateStats(data) {
+        document.getElementById('totalDevices').textContent = backupData.length;
+        document.getElementById('totalBackups').textContent = data.total_backups || 0;
+        document.getElementById('lastBackupTime').textContent = data.last_backup || '-';
+        document.getElementById('configChanges').textContent = data.changes || 0;
+    }
+    
+    // 更新备份列表
+    function updateBackupList() {
+        const tbody = document.getElementById('backupList');
+        
+        if (backupData.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="text-center text-muted py-4">
+                        <i class="fas fa-inbox"></i> 暂无设备
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = backupData.map(device => {
+            const statusClass = device.backup_status === 'success' ? 'success' : 
+                               device.backup_status === 'failed' ? 'danger' : 'secondary';
+            const statusText = device.backup_status === 'success' ? '正常' :
+                              device.backup_status === 'failed' ? '失败' : '未备份';
+            
+            return `
+                <tr data-name="${device.name.toLowerCase()}">
+                    <td><input type="checkbox" class="device-checkbox" value="${device.id}"></td>
+                    <td>
+                        <a href="#" onclick="showHistory(${device.id}); return false;">
+                            ${device.name}
+                        </a>
+                    </td>
+                    <td>${device.ip_address}</td>
+                    <td>${device.vendor}</td>
+                    <td><span class="badge badge-${statusClass}">${statusText}</span></td>
+                    <td>${device.last_backup || '-'}</td>
+                    <td>${device.backup_count || 0}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="backupDevice(${device.id})" title="立即备份">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-info" onclick="showConfig(${device.id})" title="查看配置">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-success" onclick="showDiff(${device.id})" title="配置对比">
+                            <i class="fas fa-code-compare"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="showHistory(${device.id})" title="历史">
+                            <i class="fas fa-history"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+    
+    // 筛选设备
+    function filterDevices() {
+        const keyword = document.getElementById('searchInput').value.toLowerCase();
+        const rows = document.querySelectorAll('#backupList tr');
+        
+        rows.forEach(row => {
+            const name = row.getAttribute('data-name') || '';
+            row.style.display = name.includes(keyword) ? '' : 'none';
+        });
+    }
+    
+    // 全选/取消
+    function toggleSelectAll() {
+        const checked = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.device-checkbox').forEach(cb => {
+            cb.checked = checked;
+        });
+    }
+    
+    // 备份单个设备
+    function backupDevice(deviceId) {
+        fetch(`/api/devices/${deviceId}/backup`, {
+            method: 'POST'
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showToast('success', '备份成功');
+                loadBackupData();
+            } else {
+                showToast('error', data.message || '备份失败');
+            }
+        })
+        .catch(err => {
+            showToast('error', '备份失败: ' + err.message);
+        });
+    }
+    
+    // 显示备份历史
+    function showHistory(deviceId) {
+        currentDeviceId = deviceId;
+        const device = backupData.find(d => d.id === deviceId);
+        document.getElementById('historyDeviceName').textContent = device ? device.name : '';
+        
+        fetch(`/api/devices/${deviceId}/backups`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderTimeline(data.backups);
+                    $('#historyModal').modal('show');
+                }
+            });
+    }
+    
+    // 渲染时间线
+    function renderTimeline(backups) {
+        const timeline = document.getElementById('backupTimeline');
+        
+        if (!backups || backups.length === 0) {
+            timeline.innerHTML = '<p class="text-muted">暂无备份记录</p>';
+            return;
+        }
+        
+        timeline.innerHTML = backups.map(backup => {
+            const statusClass = backup.status === 'success' ? 'bg-success' : 'bg-danger';
+            return `
+                <div class="backup-timeline-item">
+                    <div class="d-flex justify-content-between">
+                        <div>
+                            <strong>${backup.created_at}</strong>
+                            <span class="badge badge-${backup.status === 'success' ? 'success' : 'danger'} ml-2">
+                                ${backup.status === 'success' ? '成功' : '失败'}
+                            </span>
+                            ${backup.changed ? '<span class="badge badge-warning ml-1">有变更</span>' : ''}
+                        </div>
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary" onclick="viewBackupConfig(${backup.id})">
+                                查看
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteBackup(${backup.id})">
+                                删除
+                            </button>
+                        </div>
+                    </div>
+                    <small class="text-muted">${backup.size || ''} ${backup.message || ''}</small>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    // 显示配置
+    function showConfig(deviceId) {
+        currentDeviceId = deviceId;
+        const device = backupData.find(d => d.id === deviceId);
+        document.getElementById('configDeviceName').textContent = device ? device.name : '';
+        
+        fetch(`/api/devices/${deviceId}/backups`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const select = document.getElementById('backupVersionSelect');
+                    select.innerHTML = '<option value="">选择备份版本</option>';
+                    data.backups.forEach(backup => {
+                        select.innerHTML += `<option value="${backup.id}">${backup.created_at}</option>`;
+                    });
+                    $('#configModal').modal('show');
+                }
+            });
+    }
+    
+    // 加载配置版本
+    function loadConfigVersion() {
+        const backupId = document.getElementById('backupVersionSelect').value;
+        if (!backupId) return;
+        
+        fetch(`/api/backups/${backupId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('configContent').textContent = data.config || '无内容';
+                }
+            });
+    }
+    
+    // 显示对比
+    function showDiff(deviceId) {
+        currentDeviceId = deviceId;
+        const device = backupData.find(d => d.id === deviceId);
+        document.getElementById('diffDeviceName').textContent = device ? device.name : '';
+        
+        fetch(`/api/devices/${deviceId}/backups`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.backups.length >= 2) {
+                    const oldSelect = document.getElementById('oldVersionSelect');
+                    const newSelect = document.getElementById('newVersionSelect');
+                    
+                    oldSelect.innerHTML = '<option value="">选择旧版本</option>';
+                    newSelect.innerHTML = '<option value="">选择新版本</option>';
+                    
+                    data.backups.forEach(backup => {
+                        oldSelect.innerHTML += `<option value="${backup.id}">${backup.created_at}</option>`;
+                        newSelect.innerHTML += `<option value="${backup.id}">${backup.created_at}</option>`;
+                    });
+                    
+                    // 默认选择最新两个
+                    if (data.backups.length >= 2) {
+                        oldSelect.value = data.backups[1].id;
+                        newSelect.value = data.backups[0].id;
+                        compareConfigs();
+                    }
+                }
+                $('#diffModal').modal('show');
+            });
+    }
+    
+    // 对比配置
+    function compareConfigs() {
+        const oldId = document.getElementById('oldVersionSelect').value;
+        const newId = document.getElementById('newVersionSelect').value;
+        
+        if (!oldId || !newId) {
+            document.getElementById('diffContent').innerHTML = '请选择两个版本进行对比';
+            return;
+        }
+        
+        fetch(`/api/backups/compare?old=${oldId}&new=${newId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderDiff(data.diff);
+                }
+            });
+    }
+    
+    // 渲染差异
+    function renderDiff(diff) {
+        if (!diff || diff.length === 0) {
+            document.getElementById('diffContent').innerHTML = '<span class="text-success">配置无变化</span>';
+            return;
+        }
+        
+        document.getElementById('diffContent').innerHTML = diff.map(line => {
+            if (line.startsWith('+')) {
+                return `<div class="diff-line diff-add">${escapeHtml(line)}</div>`;
+            } else if (line.startsWith('-')) {
+                return `<div class="diff-line diff-remove">${escapeHtml(line)}</div>`;
+            } else {
+                return `<div class="diff-line">${escapeHtml(line)}</div>`;
+            }
+        }).join('');
+    }
+    
+    // 一键备份
+    function showBackupAllModal() {
+        $('#backupAllModal').modal('show');
+    }
+    
+    function startBackupAll() {
+        const btn = document.getElementById('startBackupBtn');
+        btn.disabled = true;
+        document.getElementById('backupProgress').style.display = 'block';
+        
+        const selected = [];
+        document.querySelectorAll('.device-checkbox:checked').forEach(cb => {
+            selected.push(parseInt(cb.value));
+        });
+        
+        const deviceIds = selected.length > 0 ? selected : backupData.map(d => d.id);
+        let completed = 0;
+        
+        deviceIds.forEach(deviceId => {
+            fetch(`/api/devices/${deviceId}/backup`, {
+                method: 'POST'
+            })
+            .then(r => r.json())
+            .then(data => {
+                completed++;
+                const progress = Math.round((completed / deviceIds.length) * 100);
+                document.getElementById('backupProgressBar').style.width = progress + '%';
+                document.getElementById('backupStatus').textContent = 
+                    `正在备份... (${completed}/${deviceIds.length})`;
+                
+                if (completed === deviceIds.length) {
+                    document.getElementById('backupStatus').textContent = '备份完成';
+                    setTimeout(() => {
+                        $('#backupAllModal').modal('hide');
+                        loadBackupData();
+                        btn.disabled = false;
+                        document.getElementById('backupProgress').style.display = 'none';
+                        document.getElementById('backupProgressBar').style.width = '0%';
+                    }, 1000);
+                }
+            });
+        });
+    }
+    
+    // 定时备份设置
+    function showScheduleModal() {
+        $('#scheduleModal').modal('show');
+    }
+    
+    function saveSchedule() {
+        const schedule = {
+            interval: document.getElementById('scheduleInterval').value,
+            time: document.getElementById('scheduleTime').value,
+            retention: parseInt(document.getElementById('retentionCount').value),
+            notify: document.getElementById('notifyOnChange').checked
+        };
+        
+        fetch('/api/backups/schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(schedule)
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showToast('success', '定时备份设置已保存');
+                $('#scheduleModal').modal('hide');
+            } else {
+                showToast('error', data.message || '保存失败');
+            }
+        });
+    }
+    
+    // 下载配置
+    function downloadConfig() {
+        const backupId = document.getElementById('backupVersionSelect').value;
+        if (backupId) {
+            window.location.href = `/api/backups/${backupId}/download`;
+        }
+    }
+    
+    // 复制配置
+    function copyConfig() {
+        const content = document.getElementById('configContent').textContent;
+        navigator.clipboard.writeText(content).then(() => {
+            showToast('success', '已复制到剪贴板');
+        });
+    }
+    
+    // 工具函数
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // 初始化
+    $(document).ready(function() {
+        loadBackupData();
+    });
+</script>
+{% endblock %}

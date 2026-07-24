@@ -1,0 +1,560 @@
+{% extends "base.html" %}
+
+{% block title %}MAC地址表 - 网络设备监控系统{% endblock %}
+
+{% block extra_css %}
+<style>
+    .mac-search-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 12px;
+    }
+    .mac-search-card .form-control {
+        background: rgba(255,255,255,0.9);
+        border: none;
+    }
+    .mac-badge {
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 0.85rem;
+        letter-spacing: 0.5px;
+    }
+    .mac-vendor {
+        font-size: 0.75rem;
+        color: #6c757d;
+    }
+    .path-hop {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        margin-bottom: 10px;
+    }
+    .path-hop .hop-number {
+        width: 30px;
+        height: 30px;
+        background: #007bff;
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 15px;
+        font-weight: bold;
+    }
+    .path-hop .hop-info {
+        flex: 1;
+    }
+    .path-hop .hop-arrow {
+        color: #6c757d;
+        margin: 0 10px;
+    }
+    .port-tag {
+        background: #e9ecef;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- MAC 搜索卡片 -->
+    <div class="card mac-search-card mb-4">
+        <div class="card-body">
+            <h5 class="mb-3"><i class="fas fa-search"></i> MAC 地址追踪</h5>
+            <div class="row">
+                <div class="col-md-8">
+                    <div class="input-group">
+                        <input type="text" class="form-control form-control-lg" id="macInput" 
+                               placeholder="输入 MAC 地址 (如: 00:1A:2B:3C:4D:5E 或 001A.2B3C.4D5E)">
+                        <div class="input-group-append">
+                            <button class="btn btn-light btn-lg" onclick="searchMac()">
+                                <i class="fas fa-search"></i> 查询
+                            </button>
+                        </div>
+                    </div>
+                    <small class="text-light">支持多种格式：00:1A:2B:3C:4D:5E、00-1A-2B-3C-4D-5E、001A.2B3C.4D5E</small>
+                </div>
+                <div class="col-md-4">
+                    <div class="text-right">
+                        <div class="h3 mb-0" id="totalMacs">0</div>
+                        <div class="text-light">MAC 地址总数</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 查询结果 -->
+    <div id="searchResult" style="display: none;">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h6 class="mb-0"><i class="fas fa-map-marker-alt"></i> 定位结果</h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <strong>MAC 信息</strong>
+                            </div>
+                            <div class="card-body">
+                                <table class="table table-sm">
+                                    <tr>
+                                        <td width="100"><strong>MAC 地址</strong></td>
+                                        <td><code id="resultMac" class="mac-badge"></code></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>厂商</strong></td>
+                                        <td id="resultVendor" class="mac-vendor"></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>VLAN</strong></td>
+                                        <td id="resultVlan"></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>类型</strong></td>
+                                        <td id="resultType"></td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <strong>接入位置</strong>
+                            </div>
+                            <div class="card-body">
+                                <table class="table table-sm">
+                                    <tr>
+                                        <td width="100"><strong>设备</strong></td>
+                                        <td id="resultDevice"></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>端口</strong></td>
+                                        <td><span id="resultPort" class="port-tag"></span></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>首次发现</strong></td>
+                                        <td id="resultFirstSeen"></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>最后更新</strong></td>
+                                        <td id="resultLastSeen"></td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 追踪路径 -->
+                <div class="mt-3">
+                    <h6><i class="fas fa-route"></i> 追踪路径</h6>
+                    <div id="tracePath">
+                        <!-- 动态填充 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- MAC 地址表 -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="fas fa-table"></i> MAC 地址表</h6>
+            <div>
+                <select class="form-control form-control-sm d-inline-block" id="deviceFilter" 
+                        style="width: auto;" onchange="loadMacTable()">
+                    <option value="">全部设备</option>
+                </select>
+                <select class="form-control form-control-sm d-inline-block" id="vlanFilter" 
+                        style="width: auto;" onchange="loadMacTable()">
+                    <option value="">全部 VLAN</option>
+                </select>
+                <button class="btn btn-sm btn-primary ml-2" onclick="refreshMacTable()">
+                    <i class="fas fa-sync"></i> 刷新
+                </button>
+                <button class="btn btn-sm btn-success" onclick="exportMacTable()">
+                    <i class="fas fa-download"></i> 导出
+                </button>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>MAC 地址</th>
+                            <th>厂商</th>
+                            <th>VLAN</th>
+                            <th>设备</th>
+                            <th>端口</th>
+                            <th>类型</th>
+                            <th>首次发现</th>
+                            <th>最后更新</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="macTable">
+                        <tr>
+                            <td colspan="9" class="text-center text-muted py-4">
+                                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card-footer">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="text-muted">
+                    显示 <span id="showingCount">0</span> 条，共 <span id="totalCount">0</span> 条
+                </div>
+                <nav>
+                    <ul class="pagination pagination-sm mb-0" id="pagination">
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MAC 详情模态框 -->
+<div class="modal fade" id="macDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">MAC 地址详情</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">基本信息</div>
+                            <div class="card-body" id="macDetailInfo">
+                                <!-- 动态填充 -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">历史记录</div>
+                            <div class="card-body" id="macDetailHistory">
+                                <!-- 动态填充 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let macData = [];
+    let currentPage = 1;
+    let pageSize = 20;
+    let totalMacs = 0;
+    
+    // 初始化
+    function init() {
+        loadDeviceFilter();
+        loadMacTable();
+        updateTotalCount();
+    }
+    
+    // 加载设备筛选器
+    function loadDeviceFilter() {
+        fetch('/api/devices')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const select = document.getElementById('deviceFilter');
+                    select.innerHTML = '<option value="">全部设备</option>';
+                    data.devices.forEach(d => {
+                        select.innerHTML += `<option value="${d.id}">${d.name}</option>`;
+                    });
+                }
+            });
+    }
+    
+    // 加载 MAC 表
+    function loadMacTable(page = 1) {
+        currentPage = page;
+        const deviceId = document.getElementById('deviceFilter').value;
+        const vlanId = document.getElementById('vlanFilter').value;
+        const params = new URLSearchParams({
+            page: page,
+            size: pageSize,
+            device_id: deviceId,
+            vlan_id: vlanId
+        });
+        
+        fetch(`/api/mac-addresses?${params}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    macData = data.macs || [];
+                    totalMacs = data.total || 0;
+                    renderMacTable();
+                    renderPagination();
+                }
+            })
+            .catch(err => {
+                console.error('加载 MAC 表失败:', err);
+            });
+    }
+    
+    // 渲染 MAC 表
+    function renderMacTable() {
+        const tbody = document.getElementById('macTable');
+        
+        if (macData.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9" class="text-center text-muted py-4">
+                        <i class="fas fa-inbox"></i> 暂无数据
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = macData.map(mac => `
+            <tr>
+                <td>
+                    <code class="mac-badge">${formatMac(mac.mac_address)}</code>
+                </td>
+                <td>
+                    <span class="mac-vendor">${mac.vendor || '-'}</span>
+                </td>
+                <td><span class="badge badge-secondary">VLAN ${mac.vlan_id}</span></td>
+                <td>
+                    <a href="#" onclick="filterByDevice(${mac.device_id}); return false;">
+                        ${mac.device_name}
+                    </a>
+                </td>
+                <td><span class="port-tag">${mac.port}</span></td>
+                <td>
+                    <span class="badge badge-${mac.mac_type === 'dynamic' ? 'info' : 'primary'}">
+                        ${mac.mac_type === 'dynamic' ? '动态' : '静态'}
+                    </span>
+                </td>
+                <td>${mac.first_seen || '-'}</td>
+                <td>${mac.last_seen || '-'}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary" onclick="showMacDetail('${mac.mac_address}')" title="详情">
+                        <i class="fas fa-info-circle"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-info" onclick="traceMac('${mac.mac_address}')" title="追踪">
+                        <i class="fas fa-route"></i>
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+        
+        document.getElementById('showingCount').textContent = macData.length;
+        document.getElementById('totalCount').textContent = totalMacs;
+    }
+    
+    // 渲染分页
+    function renderPagination() {
+        const totalPages = Math.ceil(totalMacs / pageSize);
+        const pagination = document.getElementById('pagination');
+        
+        if (totalPages <= 1) {
+            pagination.innerHTML = '';
+            return;
+        }
+        
+        let html = '';
+        
+        // 上一页
+        html += `<li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="loadMacTable(${currentPage - 1}); return false;">上一页</a>
+        </li>`;
+        
+        // 页码
+        for (let i = 1; i <= totalPages; i++) {
+            if (i === 1 || i === totalPages || (i >= currentPage - 2 && i <= currentPage + 2)) {
+                html += `<li class="page-item ${i === currentPage ? 'active' : ''}">
+                    <a class="page-link" href="#" onclick="loadMacTable(${i}); return false;">${i}</a>
+                </li>`;
+            } else if (i === currentPage - 3 || i === currentPage + 3) {
+                html += `<li class="page-item disabled"><a class="page-link" href="#">...</a></li>`;
+            }
+        }
+        
+        // 下一页
+        html += `<li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="loadMacTable(${currentPage + 1}); return false;">下一页</a>
+        </li>`;
+        
+        pagination.innerHTML = html;
+    }
+    
+    // 搜索 MAC
+    function searchMac() {
+        const macInput = document.getElementById('macInput').value.trim();
+        if (!macInput) {
+            showToast('warning', '请输入 MAC 地址');
+            return;
+        }
+        
+        const normalizedMac = normalizeMac(macInput);
+        
+        fetch(`/api/mac-addresses/${encodeURIComponent(normalizedMac)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showSearchResult(data);
+                } else {
+                    showToast('error', data.message || '未找到该 MAC 地址');
+                    document.getElementById('searchResult').style.display = 'none';
+                }
+            })
+            .catch(err => {
+                showToast('error', '查询失败: ' + err.message);
+            });
+    }
+    
+    // 显示搜索结果
+    function showSearchResult(data) {
+        document.getElementById('searchResult').style.display = 'block';
+        document.getElementById('resultMac').textContent = formatMac(data.mac_address);
+        document.getElementById('resultVendor').textContent = data.vendor || '未知';
+        document.getElementById('resultVlan').textContent = data.vlan_id ? `VLAN ${data.vlan_id}` : '-';
+        document.getElementById('resultType').innerHTML = data.mac_type === 'dynamic' ? 
+            '<span class="badge badge-info">动态学习</span>' : 
+            '<span class="badge badge-primary">静态配置</span>';
+        document.getElementById('resultDevice').textContent = data.device_name || '-';
+        document.getElementById('resultPort').textContent = data.port || '-';
+        document.getElementById('resultFirstSeen').textContent = data.first_seen || '-';
+        document.getElementById('resultLastSeen').textContent = data.last_seen || '-';
+        
+        // 渲染追踪路径
+        renderTracePath(data.path || []);
+    }
+    
+    // 渲染追踪路径
+    function renderTracePath(path) {
+        const container = document.getElementById('tracePath');
+        
+        if (!path || path.length === 0) {
+            container.innerHTML = '<p class="text-muted">无追踪路径</p>';
+            return;
+        }
+        
+        container.innerHTML = path.map((hop, index) => `
+            <div class="path-hop">
+                <div class="hop-number">${index + 1}</div>
+                <div class="hop-info">
+                    <strong>${hop.device_name}</strong>
+                    <br>
+                    <span class="text-muted">${hop.ip_address}</span>
+                    <span class="port-tag ml-2">${hop.port}</span>
+                </div>
+                ${index < path.length - 1 ? '<i class="fas fa-arrow-right hop-arrow"></i>' : ''}
+            </div>
+        `).join('');
+    }
+    
+    // 追踪 MAC
+    function traceMac(mac) {
+        document.getElementById('macInput').value = mac;
+        searchMac();
+    }
+    
+    // 显示 MAC 详情
+    function showMacDetail(mac) {
+        fetch(`/api/mac-addresses/${encodeURIComponent(mac)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('macDetailInfo').innerHTML = `
+                        <table class="table table-sm">
+                            <tr><td width="100">MAC</td><td><code>${formatMac(data.mac_address)}</code></td></tr>
+                            <tr><td>厂商</td><td>${data.vendor || '未知'}</td></tr>
+                            <tr><td>VLAN</td><td>${data.vlan_id || '-'}</td></tr>
+                            <tr><td>类型</td><td>${data.mac_type || '-'}</td></tr>
+                            <tr><td>设备</td><td>${data.device_name || '-'}</td></tr>
+                            <tr><td>端口</td><td>${data.port || '-'}</td></tr>
+                            <tr><td>首次发现</td><td>${data.first_seen || '-'}</td></tr>
+                            <tr><td>最后更新</td><td>${data.last_seen || '-'}</td></tr>
+                        </table>
+                    `;
+                    
+                    document.getElementById('macDetailHistory').innerHTML = `
+                        <p class="text-muted">暂无历史记录</p>
+                    `;
+                    
+                    $('#macDetailModal').modal('show');
+                }
+            });
+    }
+    
+    // 按设备筛选
+    function filterByDevice(deviceId) {
+        document.getElementById('deviceFilter').value = deviceId;
+        loadMacTable(1);
+    }
+    
+    // 刷新 MAC 表
+    function refreshMacTable() {
+        loadMacTable(currentPage);
+    }
+    
+    // 导出 MAC 表
+    function exportMacTable() {
+        const deviceId = document.getElementById('deviceFilter').value;
+        const vlanId = document.getElementById('vlanFilter').value;
+        const params = new URLSearchParams({ device_id: deviceId, vlan_id: vlanId });
+        window.location.href = `/api/mac-addresses/export?${params}`;
+    }
+    
+    // 更新总数
+    function updateTotalCount() {
+        fetch('/api/mac-addresses/count')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('totalMacs').textContent = data.count || 0;
+                }
+            });
+    }
+    
+    // 格式化 MAC 地址
+    function formatMac(mac) {
+        if (!mac) return '';
+        const clean = mac.replace(/[:.-]/g, '').toUpperCase();
+        return clean.match(/.{2}/g).join(':');
+    }
+    
+    // 标准化 MAC 地址
+    function normalizeMac(mac) {
+        return mac.replace(/[:.-]/g, '').toLowerCase();
+    }
+    
+    // 绑定回车搜索
+    document.getElementById('macInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            searchMac();
+        }
+    });
+    
+    // 初始化
+    $(document).ready(function() {
+        init();
+    });
+</script>
+{% endblock %}

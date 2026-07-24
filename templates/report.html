@@ -1,0 +1,719 @@
+{% extends "base.html" %}
+
+{% block title %}巡检报告 - 网络设备监控系统{% endblock %}
+
+{% block extra_css %}
+<style>
+    .report-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 20px;
+    }
+    .report-item {
+        border-radius: 8px;
+        transition: all 0.2s;
+    }
+    .report-item:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .report-status {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .status-pass { background: #28a745; }
+    .status-fail { background: #dc3545; }
+    .status-warning { background: #ffc107; }
+    .status-skip { background: #6c757d; }
+    
+    .check-category {
+        border-left: 4px solid;
+        padding-left: 15px;
+        margin-bottom: 20px;
+    }
+    .category-critical { border-left-color: #dc3545; }
+    .category-warning { border-left-color: #ffc107; }
+    .category-info { border-left-color: #17a2b8; }
+    
+    .report-score {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+    .score-excellent { background: #28a745; color: white; }
+    .score-good { background: #17a2b8; color: white; }
+    .score-average { background: #ffc107; color: #212529; }
+    .score-poor { background: #dc3545; color: white; }
+    
+    .timeline-item {
+        position: relative;
+        padding-left: 30px;
+        margin-bottom: 15px;
+    }
+    .timeline-item::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 5px;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        background: #007bff;
+    }
+    
+    .report-preview {
+        background: #fff;
+        border: 1px solid #ddd;
+        padding: 20px;
+        border-radius: 8px;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- 报告头部 -->
+    <div class="report-header">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <h4><i class="fas fa-file-alt"></i> 网络设备巡检报告</h4>
+                <p class="mb-0">自动生成设备健康状态、性能指标、安全检查的综合报告</p>
+            </div>
+            <div class="col-md-4 text-right">
+                <button class="btn btn-light" onclick="generateReport()">
+                    <i class="fas fa-magic"></i> 生成新报告
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 报告统计 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card report-item">
+                <div class="card-body text-center">
+                    <i class="fas fa-file-alt fa-2x text-primary mb-2"></i>
+                    <div class="h4 mb-0" id="totalReports">0</div>
+                    <div class="text-muted small">报告总数</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card report-item bg-success text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-check-circle fa-2x mb-2"></i>
+                    <div class="h4 mb-0" id="passRate">0%</div>
+                    <div class="text-light small">合格率</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card report-item bg-warning text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                    <div class="h4 mb-0" id="issueCount">0</div>
+                    <div class="text-light small">发现问题</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card report-item bg-info text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-clock fa-2x mb-2"></i>
+                    <div class="h4 mb-0" id="avgScore">-</div>
+                    <div class="text-light small">平均评分</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 报告列表 -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="fas fa-list"></i> 历史报告</h6>
+            <div>
+                <select class="form-control form-control-sm d-inline-block" id="reportTypeFilter" 
+                        style="width: auto;" onchange="filterReports()">
+                    <option value="all">全部类型</option>
+                    <option value="daily">日报</option>
+                    <option value="weekly">周报</option>
+                    <option value="monthly">月报</option>
+                    <option value="adhoc">临时报告</option>
+                </select>
+                <select class="form-control form-control-sm d-inline-block ml-2" id="reportStatusFilter" 
+                        style="width: auto;" onchange="filterReports()">
+                    <option value="all">全部状态</option>
+                    <option value="pass">合格</option>
+                    <option value="warning">警告</option>
+                    <option value="fail">不合格</option>
+                </select>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>报告名称</th>
+                            <th>类型</th>
+                            <th>检查设备数</th>
+                            <th>通过项</th>
+                            <th>警告项</th>
+                            <th>失败项</th>
+                            <th>评分</th>
+                            <th>生成时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reportList">
+                        <tr>
+                            <td colspan="9" class="text-center text-muted py-4">
+                                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 生成报告模态框 -->
+<div class="modal fade" id="generateModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">生成巡检报告</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>报告类型</label>
+                            <select class="form-control" id="newReportType">
+                                <option value="adhoc">临时报告</option>
+                                <option value="daily">日报</option>
+                                <option value="weekly">周报</option>
+                                <option value="monthly">月报</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>报告名称</label>
+                            <input type="text" class="form-control" id="newReportName" 
+                                   placeholder="例如: 2026年4月巡检报告">
+                        </div>
+                        <div class="form-group">
+                            <label>目标设备</label>
+                            <select class="form-control" id="targetDevices">
+                                <option value="all">全部设备</option>
+                                <option value="online">仅在线设备</option>
+                                <option value="selected">指定设备</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="selectedDevicesGroup" style="display:none;">
+                            <label>选择设备</label>
+                            <div id="deviceCheckboxes">
+                                <!-- 动态填充 -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>检查项目</label>
+                            <div class="check-category category-critical">
+                                <div class="custom-control custom-checkbox">
+                                    <input type="checkbox" class="custom-control-input" id="checkConnectivity" checked>
+                                    <label class="custom-control-label" for="checkConnectivity">连通性检查</label>
+                                </div>
+                                <div class="custom-control custom-checkbox">
+                                    <input type="checkbox" class="custom-control-input" id="checkPerformance" checked>
+                                    <label class="custom-control-label" for="checkPerformance">性能检查</label>
+                                </div>
+                            </div>
+                            <div class="check-category category-warning">
+                                <div class="custom-control custom-checkbox">
+                                    <input type="checkbox" class="custom-control-input" id="checkConfig" checked>
+                                    <label class="custom-control-label" for="checkConfig">配置检查</label>
+                                </div>
+                                <div class="custom-control custom-checkbox">
+                                    <input type="checkbox" class="custom-control-input" id="checkSecurity" checked>
+                                    <label class="custom-control-label" for="checkSecurity">安全检查</label>
+                                </div>
+                            </div>
+                            <div class="check-category category-info">
+                                <div class="custom-control custom-checkbox">
+                                    <input type="checkbox" class="custom-control-input" id="checkPorts">
+                                    <label class="custom-control-label" for="checkPorts">端口状态检查</label>
+                                </div>
+                                <div class="custom-control custom-checkbox">
+                                    <input type="checkbox" class="custom-control-input" id="checkBaseline">
+                                    <label class="custom-control-label" for="checkBaseline">基线对比</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="generateProgress" style="display:none;">
+                    <hr>
+                    <div class="progress">
+                        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="mt-2" id="progressStatus">正在生成报告...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="generateBtn" onclick="submitGenerate()">
+                    <i class="fas fa-magic"></i> 生成报告
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 报告详情模态框 -->
+<div class="modal fade" id="reportDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">报告详情 - <span id="reportDetailTitle"></span></h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-body text-center">
+                                <div class="report-score score-excellent" id="reportDetailScore">-</div>
+                                <div>综合评分</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="row text-center">
+                                    <div class="col-md-3">
+                                        <div class="h5" id="detailDeviceCount">0</div>
+                                        <div class="text-muted">检查设备</div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="h5 text-success" id="detailPassCount">0</div>
+                                        <div class="text-muted">通过项</div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="h5 text-warning" id="detailWarningCount">0</div>
+                                        <div class="text-muted">警告项</div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="h5 text-danger" id="detailFailCount">0</div>
+                                        <div class="text-muted">失败项</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <h6>检查结果明细</h6>
+                <div class="report-preview" id="reportDetailContent">
+                    <!-- 动态填充 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" onclick="downloadReport()">
+                    <i class="fas fa-download"></i> 下载报告
+                </button>
+                <button type="button" class="btn btn-success" onclick="exportReportPdf()">
+                    <i class="fas fa-file-pdf"></i> 导出 PDF
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 报告预览模态框 -->
+<div class="modal fade" id="reportPreviewModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">报告预览</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="reportPreviewContent" class="report-preview">
+                    <!-- 动态填充 -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" onclick="printReport()">
+                    <i class="fas fa-print"></i> 打印
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let reportData = [];
+    let deviceData = [];
+    let currentReportId = null;
+    
+    // 初始化
+    function init() {
+        loadDevices();
+        loadReports();
+    }
+    
+    // 加载设备
+    function loadDevices() {
+        fetch('/api/devices')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    deviceData = data.devices || [];
+                    renderDeviceCheckboxes();
+                }
+            });
+    }
+    
+    // 渲染设备选择框
+    function renderDeviceCheckboxes() {
+        const container = document.getElementById('deviceCheckboxes');
+        container.innerHTML = deviceData.map(d => `
+            <div class="custom-control custom-checkbox">
+                <input type="checkbox" class="custom-control-input device-check" id="device_${d.id}" value="${d.id}">
+                <label class="custom-control-label" for="device_${d.id}">${d.name}</label>
+            </div>
+        `).join('');
+    }
+    
+    // 加载报告列表
+    function loadReports() {
+        fetch('/api/reports')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    reportData = data.reports || [];
+                    renderReportList();
+                    updateStats(data);
+                }
+            })
+            .catch(err => {
+                console.error('加载报告失败:', err);
+            });
+    }
+    
+    // 渲染报告列表
+    function renderReportList() {
+        const tbody = document.getElementById('reportList');
+        
+        if (reportData.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9" class="text-center text-muted py-4">
+                        <i class="fas fa-inbox"></i> 暂无报告
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = reportData.map(report => {
+            const scoreClass = getScoreClass(report.score);
+            const typeText = getTypeText(report.report_type);
+            const statusBadge = report.status === 'pass' ? 'success' : 
+                               report.status === 'warning' ? 'warning' : 'danger';
+            
+            return `
+                <tr data-type="${report.report_type}" data-status="${report.status}">
+                    <td>
+                        <a href="#" onclick="showReportDetail(${report.id}); return false;">
+                            ${report.name}
+                        </a>
+                    </td>
+                    <td><span class="badge badge-secondary">${typeText}</span></td>
+                    <td>${report.device_count || 0}</td>
+                    <td class="text-success">${report.pass_count || 0}</td>
+                    <td class="text-warning">${report.warning_count || 0}</td>
+                    <td class="text-danger">${report.fail_count || 0}</td>
+                    <td>
+                        <div class="report-score ${scoreClass}" style="width:35px;height:35px;font-size:0.8rem;">
+                            ${report.score || '-'}
+                        </div>
+                    </td>
+                    <td>${report.created_at}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showReportDetail(${report.id})" title="查看">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-success" onclick="downloadReportById(${report.id})" title="下载">
+                            <i class="fas fa-download"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteReport(${report.id})" title="删除">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+    
+    // 更新统计
+    function updateStats(data) {
+        document.getElementById('totalReports').textContent = reportData.length;
+        document.getElementById('passRate').textContent = data.pass_rate || '0%';
+        document.getElementById('issueCount').textContent = data.issue_count || 0;
+        document.getElementById('avgScore').textContent = data.avg_score || '-';
+    }
+    
+    // 获取评分样式类
+    function getScoreClass(score) {
+        if (!score) return 'score-poor';
+        if (score >= 90) return 'score-excellent';
+        if (score >= 70) return 'score-good';
+        if (score >= 50) return 'score-average';
+        return 'score-poor';
+    }
+    
+    // 获取类型文本
+    function getTypeText(type) {
+        const types = {
+            'daily': '日报',
+            'weekly': '周报',
+            'monthly': '月报',
+            'adhoc': '临时报告'
+        };
+        return types[type] || type;
+    }
+    
+    // 筛选报告
+    function filterReports() {
+        const typeFilter = document.getElementById('reportTypeFilter').value;
+        const statusFilter = document.getElementById('reportStatusFilter').value;
+        const rows = document.querySelectorAll('#reportList tr');
+        
+        rows.forEach(row => {
+            const type = row.getAttribute('data-type');
+            const status = row.getAttribute('data-status');
+            const matchType = typeFilter === 'all' || type === typeFilter;
+            const matchStatus = statusFilter === 'all' || status === statusFilter;
+            row.style.display = matchType && matchStatus ? '' : 'none';
+        });
+    }
+    
+    // 生成报告
+    function generateReport() {
+        document.getElementById('newReportName').value = '';
+        $('#generateModal').modal('show');
+    }
+    
+    // 监听设备选择变化
+    document.getElementById('targetDevices').addEventListener('change', function() {
+        const group = document.getElementById('selectedDevicesGroup');
+        group.style.display = this.value === 'selected' ? 'block' : 'none';
+    });
+    
+    // 提交生成
+    function submitGenerate() {
+        const reportType = document.getElementById('newReportType').value;
+        const reportName = document.getElementById('newReportName').value;
+        const targetDevices = document.getElementById('targetDevices').value;
+        
+        // 获取选中的设备
+        let deviceIds = null;
+        if (targetDevices === 'selected') {
+            deviceIds = [];
+            document.querySelectorAll('.device-check:checked').forEach(cb => {
+                deviceIds.push(parseInt(cb.value));
+            });
+            if (deviceIds.length === 0) {
+                showToast('warning', '请选择设备');
+                return;
+            }
+        }
+        
+        // 获取检查项
+        const checks = {
+            connectivity: document.getElementById('checkConnectivity').checked,
+            performance: document.getElementById('checkPerformance').checked,
+            config: document.getElementById('checkConfig').checked,
+            security: document.getElementById('checkSecurity').checked,
+            ports: document.getElementById('checkPorts').checked,
+            baseline: document.getElementById('checkBaseline').checked
+        };
+        
+        // 显示进度
+        document.getElementById('generateProgress').style.display = 'block';
+        document.getElementById('generateBtn').disabled = true;
+        
+        fetch('/api/reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: reportName,
+                report_type: reportType,
+                target: targetDevices,
+                device_ids: deviceIds,
+                checks: checks
+            })
+        })
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('progressBar').style.width = '100%';
+            document.getElementById('progressStatus').textContent = '报告生成完成';
+            
+            setTimeout(() => {
+                $('#generateModal').modal('hide');
+                document.getElementById('generateProgress').style.display = 'none';
+                document.getElementById('progressBar').style.width = '0%';
+                document.getElementById('generateBtn').disabled = false;
+                
+                if (data.success) {
+                    showToast('success', '报告生成成功');
+                    loadReports();
+                    showReportDetail(data.report_id);
+                } else {
+                    showToast('error', data.message || '生成失败');
+                }
+            }, 500);
+        })
+        .catch(err => {
+            document.getElementById('generateProgress').style.display = 'none';
+            document.getElementById('generateBtn').disabled = false;
+            showToast('error', '生成失败: ' + err.message);
+        });
+    }
+    
+    // 显示报告详情
+    function showReportDetail(reportId) {
+        currentReportId = reportId;
+        
+        fetch(`/api/reports/${reportId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderReportDetail(data);
+                    $('#reportDetailModal').modal('show');
+                }
+            });
+    }
+    
+    // 渲染报告详情
+    function renderReportDetail(report) {
+        document.getElementById('reportDetailTitle').textContent = report.name;
+        
+        const scoreElement = document.getElementById('reportDetailScore');
+        scoreElement.textContent = report.score || '-';
+        scoreElement.className = 'report-score ' + getScoreClass(report.score);
+        
+        document.getElementById('detailDeviceCount').textContent = report.device_count || 0;
+        document.getElementById('detailPassCount').textContent = report.pass_count || 0;
+        document.getElementById('detailWarningCount').textContent = report.warning_count || 0;
+        document.getElementById('detailFailCount').textContent = report.fail_count || 0;
+        
+        // 渲染详细内容
+        let content = '';
+        
+        if (report.checks && report.checks.length > 0) {
+            report.checks.forEach(check => {
+                const iconClass = check.result === 'pass' ? 'fa-check-circle text-success' : 
+                                 check.result === 'warning' ? 'fa-exclamation-triangle text-warning' : 
+                                 'fa-times-circle text-danger';
+                
+                content += `
+                    <div class="mb-3">
+                        <h6>
+                            <i class="fas ${iconClass}"></i>
+                            ${check.device_name || '设备'} - ${check.check_name}
+                        </h6>
+                        <div class="text-muted">${check.message || ''}</div>
+                        ${check.details ? `<pre class="bg-light p-2 mt-2">${check.details}</pre>` : ''}
+                    </div>
+                `;
+            });
+        } else {
+            content = '<p class="text-muted">暂无详细检查结果</p>';
+        }
+        
+        document.getElementById('reportDetailContent').innerHTML = content;
+    }
+    
+    // 下载报告
+    function downloadReport() {
+        if (currentReportId) {
+            downloadReportById(currentReportId);
+        }
+    }
+    
+    function downloadReportById(reportId) {
+        window.location.href = `/api/reports/${reportId}/download`;
+    }
+    
+    // 导出 PDF
+    function exportReportPdf() {
+        if (currentReportId) {
+            window.location.href = `/api/reports/${currentReportId}/pdf`;
+        }
+    }
+    
+    // 打印报告
+    function printReport() {
+        const content = document.getElementById('reportPreviewContent').innerHTML;
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+            <html>
+            <head>
+                <title>巡检报告</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; }
+                    .text-success { color: green; }
+                    .text-warning { color: orange; }
+                    .text-danger { color: red; }
+                </style>
+            </head>
+            <body>${content}</body>
+            </html>
+        `);
+        printWindow.document.close();
+        printWindow.print();
+    }
+    
+    // 删除报告
+    function deleteReport(reportId) {
+        if (!confirm('确定删除此报告？')) return;
+        
+        fetch(`/api/reports/${reportId}`, { method: 'DELETE' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('success', '删除成功');
+                    loadReports();
+                } else {
+                    showToast('error', data.message || '删除失败');
+                }
+            });
+    }
+    
+    // 初始化
+    $(document).ready(function() {
+        init();
+    });
+</script>
+{% endblock %}

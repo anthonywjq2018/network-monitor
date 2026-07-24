@@ -1,0 +1,731 @@
+{% extends "base.html" %}
+
+{% block title %}基线对比 - 网络设备监控系统{% endblock %}
+
+{% block extra_css %}
+<style>
+    .baseline-header {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 20px;
+    }
+    .baseline-metric {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px;
+        border-bottom: 1px solid #eee;
+    }
+    .baseline-metric:last-child {
+        border-bottom: none;
+    }
+    .metric-trend {
+        width: 40px;
+        height: 20px;
+        text-align: center;
+    }
+    .trend-up { color: #28a745; }
+    .trend-down { color: #dc3545; }
+    .trend-stable { color: #6c757d; }
+    .deviation-bar {
+        height: 8px;
+        background: #e9ecef;
+        border-radius: 4px;
+        position: relative;
+    }
+    .deviation-bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+    .deviation-normal { background: #28a745; }
+    .deviation-warning { background: #ffc107; }
+    .deviation-critical { background: #dc3545; }
+    .baseline-card {
+        border-radius: 8px;
+        transition: all 0.2s;
+    }
+    .baseline-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .score-circle {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 1.2rem;
+    }
+    .score-excellent { background: #28a745; color: white; }
+    .score-good { background: #17a2b8; color: white; }
+    .score-warning { background: #ffc107; color: #212529; }
+    .score-poor { background: #dc3545; color: white; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <h4><i class="fas fa-chart-bar"></i> 智能基线对比</h4>
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary" onclick="createBaseline()">
+                <i class="fas fa-plus"></i> 创建基线
+            </button>
+            <button class="btn btn-success" onclick="refreshBaseline()">
+                <i class="fas fa-sync"></i> 刷新
+            </button>
+            <button class="btn btn-outline-primary" onclick="showComparisonModal()">
+                <i class="fas fa-code-compare"></i> 执行对比
+            </button>
+        </div>
+    </div>
+    
+    <!-- 基线概览 -->
+    <div class="baseline-header mb-4">
+        <div class="row">
+            <div class="col-md-6">
+                <h5>基线状态概览</h5>
+                <p class="mb-0">自动学习设备正常运行状态，智能检测异常偏差</p>
+            </div>
+            <div class="col-md-6 text-right">
+                <div class="h2 mb-0" id="baselineScore">-</div>
+                <div>整体偏差评分</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 设备基线状态 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card baseline-card bg-success text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-check-circle fa-2x mb-2"></i>
+                    <div class="h4 mb-0" id="normalCount">0</div>
+                    <div>正常设备</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card baseline-card bg-warning text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                    <div class="h4 mb-0" id="warningCount">0</div>
+                    <div>轻微偏差</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card baseline-card bg-danger text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-times-circle fa-2x mb-2"></i>
+                    <div class="h4 mb-0" id="criticalCount">0</div>
+                    <div>严重偏差</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card baseline-card bg-info text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-clock fa-2x mb-2"></i>
+                    <div class="h4 mb-0" id="noBaselineCount">0</div>
+                    <div>无基线</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 设备基线列表 -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="fas fa-list"></i> 设备基线对比结果</h6>
+            <div>
+                <select class="form-control form-control-sm d-inline-block" id="deviationFilter" 
+                        style="width: auto;" onchange="filterByDeviation()">
+                    <option value="all">全部状态</option>
+                    <option value="normal">正常</option>
+                    <option value="warning">轻微偏差</option>
+                    <option value="critical">严重偏差</option>
+                    <option value="no_baseline">无基线</option>
+                </select>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>设备名称</th>
+                            <th>IP 地址</th>
+                            <th>基线状态</th>
+                            <th>偏差评分</th>
+                            <th>CPU 偏差</th>
+                            <th>内存偏差</th>
+                            <th>端口变化</th>
+                            <th>基线时间</th>
+                            <th>最后对比</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="baselineTable">
+                        <tr>
+                            <td colspan="10" class="text-center text-muted py-4">
+                                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 基线详情 -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="fas fa-info-circle"></i> 基线指标详情</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="form-group">
+                        <label>选择设备查看详情</label>
+                        <select class="form-control" id="deviceSelect" onchange="loadDeviceBaseline()">
+                            <option value="">选择设备</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div id="baselineDetail">
+                <p class="text-muted">选择设备查看基线详情</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 创建基线模态框 -->
+<div class="modal fade" id="createBaselineModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">创建基线</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>基线类型</label>
+                    <select class="form-control" id="baselineType">
+                        <option value="single">单设备基线</option>
+                        <option value="all">全部设备基线</option>
+                    </select>
+                </div>
+                <div class="form-group" id="deviceSelectGroup">
+                    <label>选择设备</label>
+                    <select class="form-control" id="baselineDevice">
+                        <option value="">选择设备</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>学习周期</label>
+                    <select class="form-control" id="learningPeriod">
+                        <option value="1day">1 天</option>
+                        <option value="3days">3 天</option>
+                        <option value="7days" selected>7 天</option>
+                        <option value="14days">14 天</option>
+                        <option value="30days">30 天</option>
+                    </select>
+                    <small class="text-muted">系统将自动学习该周期内的正常运行状态</small>
+                </div>
+                <div class="form-group">
+                    <label>偏差阈值</label>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <input type="number" class="form-control" id="cpuThreshold" value="20" min="0" max="100">
+                            <small class="text-muted">CPU 偏差阈值 (%)</small>
+                        </div>
+                        <div class="col-md-6">
+                            <input type="number" class="form-control" id="memoryThreshold" value="20" min="0" max="100">
+                            <small class="text-muted">内存偏差阈值 (%)</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="submitBaseline()">创建基线</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 对比结果模态框 -->
+<div class="modal fade" id="comparisonModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">基线对比结果</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body" id="comparisonResult">
+                <!-- 动态填充 -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" onclick="exportComparison()">导出报告</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let baselineData = [];
+    let deviceData = [];
+    
+    // 初始化
+    function init() {
+        loadDevices();
+        loadBaselineData();
+    }
+    
+    // 加载设备
+    function loadDevices() {
+        fetch('/api/devices')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    deviceData = data.devices || [];
+                    const select = document.getElementById('deviceSelect');
+                    const baselineSelect = document.getElementById('baselineDevice');
+                    
+                    select.innerHTML = '<option value="">选择设备</option>';
+                    baselineSelect.innerHTML = '<option value="">选择设备</option>';
+                    
+                    deviceData.forEach(d => {
+                        select.innerHTML += `<option value="${d.id}">${d.name}</option>`;
+                        baselineSelect.innerHTML += `<option value="${d.id}">${d.name} (${d.ip_address})</option>`;
+                    });
+                }
+            });
+    }
+    
+    // 加载基线数据
+    function loadBaselineData() {
+        fetch('/api/baseline')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    baselineData = data.baselines || [];
+                    renderBaselineTable();
+                    updateStats(data);
+                }
+            })
+            .catch(err => {
+                console.error('加载基线数据失败:', err);
+            });
+    }
+    
+    // 渲染基线表格
+    function renderBaselineTable() {
+        const tbody = document.getElementById('baselineTable');
+        
+        if (baselineData.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="10" class="text-center text-muted py-4">
+                        <i class="fas fa-inbox"></i> 暂无基线数据
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = baselineData.map(item => {
+            const statusClass = getDeviationClass(item.deviation_score);
+            const statusText = getDeviationText(item.deviation_score);
+            
+            return `
+                <tr data-status="${item.status || 'normal'}">
+                    <td>${item.device_name}</td>
+                    <td>${item.ip_address}</td>
+                    <td>
+                        <div class="score-circle ${statusClass}" style="width:40px;height:40px;font-size:0.9rem;">
+                            ${item.deviation_score !== null ? item.deviation_score : '-'}
+                        </div>
+                    </td>
+                    <td>
+                        ${renderDeviationBar(item.deviation_score)}
+                    </td>
+                    <td>
+                        ${item.cpu_deviation !== null ? 
+                            `<span class="${item.cpu_deviation > 20 ? 'trend-down' : 'trend-stable'}">${item.cpu_deviation}%</span>` : 
+                            '-'}
+                    </td>
+                    <td>
+                        ${item.memory_deviation !== null ? 
+                            `<span class="${item.memory_deviation > 20 ? 'trend-down' : 'trend-stable'}">${item.memory_deviation}%</span>` : 
+                            '-'}
+                    </td>
+                    <td>
+                        ${item.port_changes !== null ? 
+                            `<span class="${item.port_changes > 0 ? 'text-warning' : ''}">${item.port_changes}</span>` : 
+                            '-'}
+                    </td>
+                    <td>${item.baseline_time || '-'}</td>
+                    <td>${item.last_compare || '-'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showBaselineDetail(${item.device_id})" title="详情">
+                            <i class="fas fa-info-circle"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-success" onclick="runComparison(${item.device_id})" title="对比">
+                            <i class="fas fa-code-compare"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="updateBaseline(${item.device_id})" title="更新基线">
+                            <i class="fas fa-refresh"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+    
+    // 渲染偏差条
+    function renderDeviationBar(score) {
+        if (score === null) return '<span class="text-muted">-</span>';
+        
+        const colorClass = score < 20 ? 'deviation-normal' : 
+                          score < 50 ? 'deviation-warning' : 'deviation-critical';
+        
+        return `
+            <div class="deviation-bar">
+                <div class="deviation-bar-fill ${colorClass}" style="width: ${Math.min(score, 100)}%"></div>
+            </div>
+        `;
+    }
+    
+    // 更新统计
+    function updateStats(data) {
+        document.getElementById('normalCount').textContent = data.normal || 0;
+        document.getElementById('warningCount').textContent = data.warning || 0;
+        document.getElementById('criticalCount').textContent = data.critical || 0;
+        document.getElementById('noBaselineCount').textContent = data.no_baseline || 0;
+        document.getElementById('baselineScore').textContent = data.avg_score || '-';
+    }
+    
+    // 获取偏差类
+    function getDeviationClass(score) {
+        if (score === null) return 'score-poor';
+        if (score < 10) return 'score-excellent';
+        if (score < 30) return 'score-good';
+        if (score < 60) return 'score-warning';
+        return 'score-poor';
+    }
+    
+    // 获取偏差文本
+    function getDeviationText(score) {
+        if (score === null) return '无基线';
+        if (score < 10) return '正常';
+        if (score < 30) return '轻微';
+        if (score < 60) return '中等';
+        return '严重';
+    }
+    
+    // 按偏差筛选
+    function filterByDeviation() {
+        const filter = document.getElementById('deviationFilter').value;
+        const rows = document.querySelectorAll('#baselineTable tr');
+        
+        rows.forEach(row => {
+            const status = row.getAttribute('data-status');
+            row.style.display = filter === 'all' || status === filter ? '' : 'none';
+        });
+    }
+    
+    // 加载设备基线详情
+    function loadDeviceBaseline() {
+        const deviceId = document.getElementById('deviceSelect').value;
+        if (!deviceId) {
+            document.getElementById('baselineDetail').innerHTML = '<p class="text-muted">选择设备查看基线详情</p>';
+            return;
+        }
+        
+        fetch(`/api/baseline/${deviceId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    renderBaselineDetail(data);
+                }
+            });
+    }
+    
+    // 渲染基线详情
+    function renderBaselineDetail(data) {
+        const container = document.getElementById('baselineDetail');
+        
+        let html = `
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">基线指标</div>
+                        <div class="card-body">
+                            <div class="baseline-metric">
+                                <span>CPU 平均值</span>
+                                <span><strong>${data.cpu_avg || '-'}%</strong></span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>CPU 最大值</span>
+                                <span><strong>${data.cpu_max || '-'}%</strong></span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>内存平均值</span>
+                                <span><strong>${data.memory_avg || '-'}%</strong></span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>内存最大值</span>
+                                <span><strong>${data.memory_max || '-'}%</strong></span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>活跃端口数</span>
+                                <span><strong>${data.active_ports || '-'}</strong></span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>基线建立时间</span>
+                                <span>${data.baseline_time || '-'}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-header">当前对比</div>
+                        <div class="card-body">
+                            <div class="baseline-metric">
+                                <span>当前 CPU</span>
+                                <span>
+                                    <strong>${data.current_cpu || '-'}%</strong>
+                                    ${data.cpu_deviation !== null ? 
+                                        `<span class="${data.cpu_deviation > 20 ? 'trend-down' : 'trend-stable'}">
+                                            (${data.cpu_deviation}%)
+                                        </span>` : ''}
+                                </span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>当前内存</span>
+                                <span>
+                                    <strong>${data.current_memory || '-'}%</strong>
+                                    ${data.memory_deviation !== null ? 
+                                        `<span class="${data.memory_deviation > 20 ? 'trend-down' : 'trend-stable'}">
+                                            (${data.memory_deviation}%)
+                                        </span>` : ''}
+                                </span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>端口变化</span>
+                                <span>
+                                    ${data.port_changes !== null ? 
+                                        `<span class="${data.port_changes > 0 ? 'text-warning' : ''}">${data.port_changes}</span>` : 
+                                        '-'}
+                                </span>
+                            </div>
+                            <div class="baseline-metric">
+                                <span>偏差评分</span>
+                                <span>
+                                    <div class="score-circle ${getDeviationClass(data.deviation_score)}">
+                                        ${data.deviation_score || '-'}
+                                    </div>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        container.innerHTML = html;
+    }
+    
+    // 创建基线
+    function createBaseline() {
+        $('#createBaselineModal').modal('show');
+    }
+    
+    function submitBaseline() {
+        const type = document.getElementById('baselineType').value;
+        const deviceId = document.getElementById('baselineDevice').value;
+        const period = document.getElementById('learningPeriod').value;
+        const cpuThreshold = document.getElementById('cpuThreshold').value;
+        const memoryThreshold = document.getElementById('memoryThreshold').value;
+        
+        if (type === 'single' && !deviceId) {
+            showToast('warning', '请选择设备');
+            return;
+        }
+        
+        showLoading('正在创建基线...');
+        
+        fetch('/api/baseline', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: type,
+                device_id: deviceId ? parseInt(deviceId) : null,
+                period: period,
+                thresholds: {
+                    cpu: parseInt(cpuThreshold),
+                    memory: parseInt(memoryThreshold)
+                }
+            })
+        })
+        .then(r => r.json())
+        .then(data => {
+            hideLoading();
+            if (data.success) {
+                showToast('success', '基线创建成功');
+                $('#createBaselineModal').modal('hide');
+                loadBaselineData();
+            } else {
+                showToast('error', data.message || '创建失败');
+            }
+        })
+        .catch(err => {
+            hideLoading();
+            showToast('error', '创建失败: ' + err.message);
+        });
+    }
+    
+    // 运行对比
+    function runComparison(deviceId) {
+        showLoading('正在执行基线对比...');
+        
+        fetch(`/api/baseline/${deviceId}/compare`, {
+            method: 'POST'
+        })
+        .then(r => r.json())
+        .then(data => {
+            hideLoading();
+            if (data.success) {
+                renderComparisonResult(data);
+                $('#comparisonModal').modal('show');
+            } else {
+                showToast('error', data.message || '对比失败');
+            }
+        })
+        .catch(err => {
+            hideLoading();
+            showToast('error', '对比失败: ' + err.message);
+        });
+    }
+    
+    // 渲染对比结果
+    function renderComparisonResult(data) {
+        const container = document.getElementById('comparisonResult');
+        
+        container.innerHTML = `
+            <h5>设备: ${data.device_name}</h5>
+            <hr>
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>基线值</h6>
+                    <ul class="list-group">
+                        <li class="list-group-item">CPU: ${data.baseline_cpu}%</li>
+                        <li class="list-group-item">内存: ${data.baseline_memory}%</li>
+                        <li class="list-group-item">端口数: ${data.baseline_ports}</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h6>当前值</h6>
+                    <ul class="list-group">
+                        <li class="list-group-item">
+                            CPU: ${data.current_cpu}% 
+                            <span class="${data.cpu_deviation > 20 ? 'text-danger' : ''}">
+                                (偏差 ${data.cpu_deviation}%)
+                            </span>
+                        </li>
+                        <li class="list-group-item">
+                            内存: ${data.current_memory}% 
+                            <span class="${data.memory_deviation > 20 ? 'text-danger' : ''}">
+                                (偏差 ${data.memory_deviation}%)
+                            </span>
+                        </li>
+                        <li class="list-group-item">
+                            端口数: ${data.current_ports} 
+                            <span class="${data.port_changes > 0 ? 'text-warning' : ''}">
+                                (变化 ${data.port_changes})
+                            </span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <hr>
+            <div class="text-center">
+                <div class="score-circle ${getDeviationClass(data.deviation_score)}">
+                    ${data.deviation_score}
+                </div>
+                <div>综合偏差评分</div>
+            </div>
+            ${data.issues && data.issues.length > 0 ? `
+                <hr>
+                <h6>发现的问题</h6>
+                <ul class="list-group">
+                    ${data.issues.map(issue => `
+                        <li class="list-group-item list-group-item-${issue.level}">
+                            <i class="fas fa-exclamation-circle"></i> ${issue.message}
+                        </li>
+                    `).join('')}
+                </ul>
+            ` : ''}
+        `;
+    }
+    
+    // 更新基线
+    function updateBaseline(deviceId) {
+        if (!confirm('确定更新此设备的基线？')) return;
+        
+        fetch(`/api/baseline/${deviceId}`, {
+            method: 'PUT'
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showToast('success', '基线已更新');
+                loadBaselineData();
+            } else {
+                showToast('error', data.message || '更新失败');
+            }
+        });
+    }
+    
+    // 刷新
+    function refreshBaseline() {
+        loadBaselineData();
+    }
+    
+    // 显示对比模态框
+    function showComparisonModal() {
+        $('#comparisonModal').modal('show');
+    }
+    
+    // 导出对比报告
+    function exportComparison() {
+        window.location.href = '/api/baseline/export';
+    }
+    
+    // 显示基线详情
+    function showBaselineDetail(deviceId) {
+        document.getElementById('deviceSelect').value = deviceId;
+        loadDeviceBaseline();
+    }
+    
+    // 初始化
+    $(document).ready(function() {
+        init();
+    });
+</script>
+{% endblock %}

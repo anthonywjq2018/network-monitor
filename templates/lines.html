@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block title %}专线管理 - 网络设备监控系统{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+    <div>
+        <h1><i class="bi bi-diagram-3 me-2"></i>专线管理</h1>
+        <p>管理专线业务信息，基于物理端口状态联动</p>
+    </div>
+    <div>
+        <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#importModal">
+            <i class="bi bi-upload me-2"></i>导入 Excel
+        </button>
+        <a href="/api/lines/export" class="btn btn-outline-primary">
+            <i class="bi bi-download me-2"></i>导出
+        </a>
+    </div>
+</div>
+
+<!-- 统计卡片 -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card border-start border-primary border-4">
+            <div class="card-body">
+                <h6 class="text-muted">总专线数</h6>
+                <h3>{{ lines|length }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-success border-4">
+            <div class="card-body">
+                <h6 class="text-muted">正常运行</h6>
+                <h3 id="stat-normal">0</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-danger border-4">
+            <div class="card-body">
+                <h6 class="text-muted">中断告警</h6>
+                <h3 id="stat-interrupted">0</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-start border-warning border-4">
+            <div class="card-body">
+                <h6 class="text-muted">即将到期</h6>
+                <h3 id="stat-expiring">0</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 专线列表 -->
+<div class="card">
+    <div class="card-header bg-white border-0 pt-3 px-4 d-flex justify-content-between">
+        <h5 class="card-title mb-0">专线列表</h5>
+        <div class="input-group" style="width: 300px;">
+            <input type="text" class="form-control" placeholder="搜索客户/端口/IP..." id="searchInput" onkeyup="filterLines()">
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>设备/端口</th>
+                        <th>客户名称</th>
+                        <th>运营商</th>
+                        <th>带宽</th>
+                        <th>IP 信息</th>
+                        <th>物理状态</th>
+                        <th>业务状态</th>
+                        <th>合同到期</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="lineTableBody">
+                    {% for line in lines %}
+                    <tr>
+                        <td>
+                            <strong>{{ line.device_name }}</strong><br>
+                            <small class="text-muted">{{ line.port_name }}</small>
+                        </td>
+                        <td><strong>{{ line.customer_name }}</strong></td>
+                        <td>{{ line.isp or '-' }}</td>
+                        <td>{{ line.contract_bandwidth or '-' }} M</td>
+                        <td>
+                            {% if line.ip_local or line.ip_remote %}
+                            <small>{{ line.ip_local }} ↔ {{ line.ip_remote }}</small>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if line.oper_status == 'up' %}
+                                <span class="badge bg-success">UP</span>
+                            {% else %}
+                                <span class="badge bg-danger">DOWN</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if line.status == 'Normal' %}
+                                <span class="badge bg-success">正常</span>
+                            {% elif line.status == 'Interrupted' %}
+                                <span class="badge bg-danger">中断</span>
+                            {% elif line.status == 'Expired' %}
+                                <span class="badge bg-secondary">已过期</span>
+                            {% else %}
+                                <span class="badge bg-warning">{{ line.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if line.contract_end_date %}
+                                {{ line.contract_end_date }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary" onclick="editLine({{ line.id }})">编辑</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteLine({{ line.id }})">删除</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 导入 Modal -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">导入专线数据</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="importForm" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label class="form-label">选择 Excel 文件 (.xlsx)</label>
+                        <input type="file" class="form-control" name="file" accept=".xlsx" required>
+                        <div class="form-text">请确保文件格式正确，包含设备名和端口名。</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="importLines()">导入</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// 简单统计
+document.addEventListener('DOMContentLoaded', () => {
+    let normal = 0, interrupted = 0, expiring = 0;
+    const today = new Date().toISOString().split('T')[0];
+    
+    document.querySelectorAll('tr').forEach(row => {
+        const status = row.cells[6].innerText.trim();
+        if (status.includes('正常')) normal++;
+        if (status.includes('中断')) interrupted++;
+        
+        const date = row.cells[7].innerText.trim();
+        if (date && date > today && date < new Date(new Date().setMonth(new Date().getMonth()+1)).toISOString().split('T')[0]) {
+            expiring++;
+        }
+    });
+    
+    document.getElementById('stat-normal').innerText = normal;
+    document.getElementById('stat-interrupted').innerText = interrupted;
+    document.getElementById('stat-expiring').innerText = expiring;
+});
+
+function filterLines() {
+    const input = document.getElementById('searchInput').value.toLowerCase();
+    const rows = document.querySelectorAll('#lineTableBody tr');
+    rows.forEach(row => {
+        const text = row.innerText.toLowerCase();
+        row.style.display = text.includes(input) ? '' : 'none';
+    });
+}
+
+async function deleteLine(id) {
+    if (confirm('确定要删除此专线吗？')) {
+        const res = await fetch(`/api/lines/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) location.reload();
+        else alert(data.message);
+    }
+}
+
+function editLine(id) {
+    alert('编辑功能请使用 API 或控制台 (Phase 2)');
+}
+
+async function importLines() {
+    const formData = new FormData(document.getElementById('importForm'));
+    const res = await fetch('/api/lines/import', {
+        method: 'POST',
+        body: formData
+    });
+    const data = await res.json();
+    alert(data.message);
+    if (data.success) location.reload();
+}
+</script>
+{% endblock %}

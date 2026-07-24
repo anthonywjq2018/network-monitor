@@ -1,0 +1,546 @@
+{% extends "base.html" %}
+
+{% block title %}网络拓扑 - 网络设备监控系统{% endblock %}
+
+{% block extra_css %}
+<style>
+    .topology-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+    
+    .topology-legend {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        background: white;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        font-size: 0.75rem;
+    }
+    
+    .legend-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.25rem;
+    }
+    
+    .legend-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        margin-right: 0.5rem;
+    }
+    
+    .device-info-panel {
+        position: absolute;
+        top: 50%;
+        right: 10px;
+        transform: translateY(-50%);
+        background: white;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        width: 280px;
+        max-height: 400px;
+        overflow-y: auto;
+        display: none;
+    }
+    
+    .device-info-panel.show {
+        display: block;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+    <div>
+        <h1><i class="bi bi-diagram-3 me-2"></i>网络拓扑</h1>
+        <p>自动发现网络设备连接关系，可视化展示拓扑结构</p>
+    </div>
+    <div>
+        <button class="btn btn-outline-primary btn-sm" onclick="refreshTopology()">
+            <i class="bi bi-arrow-clockwise me-1"></i>刷新拓扑
+        </button>
+        <button class="btn btn-outline-primary btn-sm" onclick="discoverTopology()">
+            <i class="bi bi-search me-1"></i>发现拓扑
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="saveTopology()">
+            <i class="bi bi-save me-1"></i>保存布局
+        </button>
+    </div>
+</div>
+
+<!-- 统计卡片 -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card stat-card info">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="stat-value">{{ stats.total_devices }}</div>
+                    <div class="stat-label">拓扑设备</div>
+                </div>
+                <i class="bi bi-hdd-rack text-info fs-3 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card success">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="stat-value">{{ stats.total_links }}</div>
+                    <div class="stat-label">链路连接</div>
+                </div>
+                <i class="bi bi-link-45deg text-success fs-3 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card success">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="stat-value">{{ stats.active_links }}</div>
+                    <div class="stat-label">活跃链路</div>
+                </div>
+                <i class="bi bi-activity text-success fs-3 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card stat-card danger">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="stat-value">{{ stats.down_links }}</div>
+                    <div class="stat-label">故障链路</div>
+                </div>
+                <i class="bi bi-exclamation-triangle text-danger fs-3 opacity-50"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 拓扑图容器 -->
+<div class="card">
+    <div class="card-body p-0">
+        <div id="topology-container">
+            <!-- 控制按钮 -->
+            <div class="topology-controls">
+                <button class="btn btn-sm btn-outline-secondary" onclick="zoomIn()">
+                    <i class="bi bi-zoom-in"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="zoomOut()">
+                    <i class="bi bi-zoom-out"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="resetView()">
+                    <i class="bi bi-arrows-fullscreen"></i>
+                </button>
+            </div>
+            
+            <!-- SVG画布 -->
+            <svg id="topology-svg" width="100%" height="100%">
+                <!-- 链路线条 -->
+                <g id="links-layer"></g>
+                <!-- 设备节点 -->
+                <g id="nodes-layer"></g>
+            </svg>
+            
+            <!-- 图例 -->
+            <div class="topology-legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: linear-gradient(135deg, #1e3a8a, #3b82f6)"></div>
+                    <span>核心设备</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #f59e0b"></div>
+                    <span>汇聚设备</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #10b981"></div>
+                    <span>接入设备</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ef4444"></div>
+                    <span>故障链路</span>
+                </div>
+            </div>
+            
+            <!-- 设备详情面板 -->
+            <div id="device-info-panel" class="device-info-panel">
+                <h6 class="mb-3"><i class="bi bi-info-circle me-2"></i>设备详情</h6>
+                <div id="device-info-content"></div>
+                <button class="btn btn-sm btn-outline-secondary mt-2" onclick="closeDeviceInfo()">
+                    <i class="bi bi-x-lg"></i> 关闭
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 发现进度 -->
+<div class="card mt-4" id="discovery-progress" style="display: none;">
+    <div class="card-header bg-white">
+        <h6 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>拓扑发现进度</h6>
+    </div>
+    <div class="card-body">
+        <div class="progress mb-3">
+            <div class="progress-bar" id="discovery-progress-bar" style="width: 0%"></div>
+        </div>
+        <div id="discovery-log" class="bg-light p-2 rounded" style="max-height: 150px; overflow-y: auto; font-size: 0.8rem;">
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// 拓扑数据
+let topologyData = {
+    devices: {{ devices | tojson | safe if devices else '[]' }},
+    links: {{ links | tojson | safe if links else '[]' }}
+};
+
+let currentZoom = 1;
+let selectedDevice = null;
+
+// 初始化拓扑图
+function initTopology() {
+    renderTopology();
+}
+
+// 渲染拓扑图
+function renderTopology() {
+    const svg = document.getElementById('topology-svg');
+    const linksLayer = document.getElementById('links-layer');
+    const nodesLayer = document.getElementById('nodes-layer');
+    
+    // 清空现有内容
+    linksLayer.innerHTML = '';
+    nodesLayer.innerHTML = '';
+    
+    // 计算布局
+    const container = document.getElementById('topology-container');
+    const width = container.offsetWidth;
+    const height = container.offsetHeight;
+    
+    // 绘制链路
+    topologyData.links.forEach(link => {
+        const source = topologyData.devices.find(d => d.id === link.source_device_id);
+        const target = topologyData.devices.find(d => d.id === link.target_device_id);
+        
+        if (source && target) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', source.topo_x || width/2);
+            line.setAttribute('y1', source.topo_y || height/2);
+            line.setAttribute('x2', target.topo_x || width/2);
+            line.setAttribute('y2', target.topo_y || height/2);
+            line.setAttribute('class', link.link_status === 'up' ? 'topology-link active' : 'topology-link down');
+            line.setAttribute('data-link-id', link.id);
+            linksLayer.appendChild(line);
+        }
+    });
+    
+    // 绘制设备节点
+    topologyData.devices.forEach(device => {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('transform', `translate(${device.topo_x || width/2}, ${device.topo_y || height/2})`);
+        g.setAttribute('data-device-id', device.id);
+        g.setAttribute('class', 'topology-node-group');
+        g.style.cursor = 'pointer';
+        
+        // 外框
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', -60);
+        rect.setAttribute('y', -40);
+        rect.setAttribute('width', 120);
+        rect.setAttribute('height', 80);
+        rect.setAttribute('rx', 8);
+        
+        // 根据层级设置颜色
+        let fillColor = '#ffffff';
+        let strokeColor = '#2563eb';
+        
+        if (device.topo_level === 0) { // 核心
+            fillColor = '#1e3a8a';
+            rect.setAttribute('fill', fillColor);
+            rect.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))';
+        } else if (device.topo_level === 1) { // 汇聚
+            strokeColor = '#f59e0b';
+            rect.setAttribute('fill', fillColor);
+            rect.setAttribute('stroke', strokeColor);
+            rect.setAttribute('stroke-width', 3);
+        } else { // 接入
+            strokeColor = '#10b981';
+            rect.setAttribute('fill', fillColor);
+            rect.setAttribute('stroke', strokeColor);
+            rect.setAttribute('stroke-width', 3);
+        }
+        
+        // 状态指示
+        if (device.status === 'down') {
+            rect.setAttribute('stroke', '#ef4444');
+            rect.setAttribute('stroke-width', 4);
+        }
+        
+        g.appendChild(rect);
+        
+        // 图标
+        const iconText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        iconText.setAttribute('x', 0);
+        iconText.setAttribute('y', -10);
+        iconText.setAttribute('text-anchor', 'middle');
+        iconText.setAttribute('font-size', '20');
+        iconText.setAttribute('fill', device.topo_level === 0 ? '#ffffff' : '#64748b');
+        
+        // 设备类型图标
+        let icon = '🖥️';
+        if (device.device_type === 'switch') icon = '🔌';
+        else if (device.device_type === 'router') icon = '🌐';
+        else if (device.device_type === 'firewall') icon = '🔒';
+        
+        iconText.textContent = icon;
+        g.appendChild(iconText);
+        
+        // 设备名称
+        const nameText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        nameText.setAttribute('x', 0);
+        nameText.setAttribute('y', 15);
+        nameText.setAttribute('text-anchor', 'middle');
+        nameText.setAttribute('font-size', '11');
+        nameText.setAttribute('font-weight', '600');
+        nameText.setAttribute('fill', device.topo_level === 0 ? '#ffffff' : '#1e293b');
+        nameText.textContent = device.name.substring(0, 12);
+        g.appendChild(nameText);
+        
+        // IP地址
+        const ipText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        ipText.setAttribute('x', 0);
+        ipText.setAttribute('y', 30);
+        ipText.setAttribute('text-anchor', 'middle');
+        ipText.setAttribute('font-size', '9');
+        ipText.setAttribute('fill', device.topo_level === 0 ? '#ffffff' : '#64748b');
+        ipText.textContent = device.ip_address;
+        g.appendChild(ipText);
+        
+        // 点击事件
+        g.addEventListener('click', () => showDeviceInfo(device));
+        
+        // 拖拽功能
+        makeDraggable(g, device);
+        
+        nodesLayer.appendChild(g);
+    });
+}
+
+// 拖拽功能
+function makeDraggable(element, device) {
+    let isDragging = false;
+    let startX, startY;
+    
+    element.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        
+        const currentTransform = element.getAttribute('transform');
+        const match = currentTransform.match(/translate\((\d+),\s*(\d+)\)/);
+        const currentX = parseInt(match[1]);
+        const currentY = parseInt(match[2]);
+        
+        element.setAttribute('transform', `translate(${currentX + dx}, ${currentY + dy})`);
+        
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        // 更新设备位置
+        device.topo_x = currentX + dx;
+        device.topo_y = currentY + dy;
+        
+        // 更新链路
+        updateLinks(device);
+    });
+    
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+    });
+}
+
+// 更新链路位置
+function updateLinks(device) {
+    const linksLayer = document.getElementById('links-layer');
+    const lines = linksLayer.querySelectorAll('line');
+    
+    topologyData.links.forEach(link => {
+        if (link.source_device_id === device.id || link.target_device_id === device.id) {
+            const line = linksLayer.querySelector(`line[data-link-id="${link.id}"]`);
+            if (line) {
+                const source = topologyData.devices.find(d => d.id === link.source_device_id);
+                const target = topologyData.devices.find(d => d.id === link.target_device_id);
+                
+                if (source && target) {
+                    line.setAttribute('x1', source.topo_x);
+                    line.setAttribute('y1', source.topo_y);
+                    line.setAttribute('x2', target.topo_x);
+                    line.setAttribute('y2', target.topo_y);
+                }
+            }
+        }
+    });
+}
+
+// 显示设备详情
+function showDeviceInfo(device) {
+    selectedDevice = device;
+    const panel = document.getElementById('device-info-panel');
+    const content = document.getElementById('device-info-content');
+    
+    const statusClass = device.status === 'online' ? 'success' : 
+                        device.status === 'down' ? 'danger' : 'secondary';
+    
+    content.innerHTML = `
+        <table class="table table-sm">
+            <tr><td><strong>名称</strong></td><td>${device.name}</td></tr>
+            <tr><td><strong>IP地址</strong></td><td>${device.ip_address}</td></tr>
+            <tr><td><strong>类型</strong></td><td>${device.device_type}</td></tr>
+            <tr><td><strong>厂商</strong></td><td>${device.vendor}</td></tr>
+            <tr><td><strong>型号</strong></td><td>${device.model || '-'}</td></tr>
+            <tr><td><strong>状态</strong></td><td><span class="status-badge ${statusClass}">${device.status}</span></td></tr>
+            <tr><td><strong>CPU</strong></td><td>${device.cpu_usage ? device.cpu_usage + '%' : '-'}</td></tr>
+            <tr><td><strong>内存</strong></td><td>${device.mem_usage ? device.mem_usage + '%' : '-'}</td></tr>
+            <tr><td><strong>位置</strong></td><td>${device.location || '-'}</td></tr>
+        </table>
+        <div class="mt-2">
+            <a href="/devices/${device.id}" class="btn btn-sm btn-primary">
+                <i class="bi bi-eye me-1"></i>查看详情
+            </a>
+            <button class="btn btn-sm btn-outline-primary" onclick="checkDevice(${device.id})">
+                <i class="bi bi-refresh me-1"></i>立即检查
+            </button>
+        </div>
+    `;
+    
+    panel.classList.add('show');
+}
+
+// 关闭设备详情
+function closeDeviceInfo() {
+    document.getElementById('device-info-panel').classList.remove('show');
+    selectedDevice = null;
+}
+
+// 检查设备
+function checkDevice(deviceId) {
+    fetch(`/api/devices/${deviceId}/check`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showAlert('设备检查完成', 'success');
+                refreshTopology();
+            } else {
+                showAlert(data.message || '检查失败', 'danger');
+            }
+        });
+}
+
+// 缩放
+function zoomIn() {
+    currentZoom = Math.min(currentZoom * 1.2, 3);
+    applyZoom();
+}
+
+function zoomOut() {
+    currentZoom = Math.max(currentZoom / 1.2, 0.5);
+    applyZoom();
+}
+
+function applyZoom() {
+    const svg = document.getElementById('topology-svg');
+    svg.style.transform = `scale(${currentZoom})`;
+    svg.style.transformOrigin = 'center center';
+}
+
+function resetView() {
+    currentZoom = 1;
+    applyZoom();
+}
+
+// 刷新拓扑
+function refreshTopology() {
+    fetch('/api/topology')
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                topologyData = data;
+                renderTopology();
+            }
+        });
+}
+
+// 发现拓扑
+function discoverTopology() {
+    const progressDiv = document.getElementById('discovery-progress');
+    const progressBar = document.getElementById('discovery-progress-bar');
+    const logDiv = document.getElementById('discovery-log');
+    
+    progressDiv.style.display = 'block';
+    progressBar.style.width = '0%';
+    logDiv.innerHTML = '';
+    
+    fetch('/api/topology/discover', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                let progress = 0;
+                const interval = setInterval(() => {
+                    progress += 10;
+                    progressBar.style.width = progress + '%';
+                    
+                    if (progress >= 100) {
+                        clearInterval(interval);
+                        setTimeout(() => {
+                            progressDiv.style.display = 'none';
+                            refreshTopology();
+                        }, 500);
+                    }
+                }, 200);
+                
+                logDiv.innerHTML = data.log || '拓扑发现完成';
+            } else {
+                showAlert(data.message || '发现失败', 'danger');
+                progressDiv.style.display = 'none';
+            }
+        });
+}
+
+// 保存布局
+function saveTopology() {
+    fetch('/api/topology/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ devices: topologyData.devices })
+    })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showAlert('拓扑布局已保存', 'success');
+            } else {
+                showAlert(data.message || '保存失败', 'danger');
+            }
+        });
+}
+
+// 页面加载完成后初始化
+document.addEventListener('DOMContentLoaded', initTopology);
+</script>
+{% endblock %}

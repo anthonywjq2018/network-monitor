@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}监控日志 - 网络设备监控系统{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1><i class="bi bi-journal-text me-2"></i>监控日志</h1>
+    <p>查看设备监控历史记录</p>
+</div>
+
+<!-- 筛选栏 -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-4">
+                <label class="form-label">设备</label>
+                <select name="device_id" class="form-select" onchange="this.form.submit()">
+                    <option value="">全部设备</option>
+                    {% for device in devices %}
+                    <option value="{{ device.id }}" {% if current_device == device.id %}selected{% endif %}>
+                        {{ device.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">检查类型</label>
+                <select name="type" class="form-select" onchange="this.form.submit()">
+                    <option value="">全部类型</option>
+                    <option value="snmp" {% if current_type == 'snmp' %}selected{% endif %}>SNMP</option>
+                    <option value="ssh" {% if current_type == 'ssh' %}selected{% endif %}>SSH</option>
+                </select>
+            </div>
+            <div class="col-md-5 d-flex align-items-end">
+                <button type="button" class="btn btn-outline-secondary" onclick="location.href='{{ url_for('logs') }}'">
+                    <i class="bi bi-x-lg me-2"></i>清除筛选
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 日志列表 -->
+<div class="card">
+    <div class="card-header bg-white border-0 pt-3 px-4">
+        <h5 class="card-title mb-0">
+            监控日志
+            <span class="badge bg-primary ms-2">{{ logs|length }}</span>
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>设备</th>
+                        <th>检查类型</th>
+                        <th>状态</th>
+                        <th>消息</th>
+                        <th>响应时间</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td>{{ log.created_at }}</td>
+                        <td>{{ log.device_name }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'info' if log.check_type == 'snmp' else 'secondary' }}">
+                                {{ log.check_type|upper }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="status-badge {{ 'success' if log.status == 'success' else 'danger' }}">
+                                {{ '成功' if log.status == 'success' else '失败' }}
+                            </span>
+                        </td>
+                        <td>{{ log.message or '-' }}</td>
+                        <td>
+                            {% if log.response_time %}
+                            {{ log.response_time }}ms
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center py-5">
+                            <i class="bi bi-inbox text-muted fs-1"></i>
+                            <p class="text-muted mt-2">暂无监控日志</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

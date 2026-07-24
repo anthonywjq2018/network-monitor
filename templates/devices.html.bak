@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+
+{% block title %}设备管理 - 网络设备监控系统{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+    <div>
+        <h1><i class="bi bi-hdd-rack me-2"></i>设备管理</h1>
+        <p>管理网络设备，支持 SSH 和 SNMP 监控</p>
+    </div>
+    <div>
+        <button class="btn btn-primary" onclick="openAddModal()">
+            <i class="bi bi-plus-lg me-2"></i>添加设备
+        </button>
+        <a href="{{ url_for('api_export_devices') }}" class="btn btn-outline-primary">
+            <i class="bi bi-download me-2"></i>导出
+        </a>
+    </div>
+</div>
+
+<!-- 设备列表 -->
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>状态</th>
+                        <th>设备名称</th>
+                        <th>IP地址</th>
+                        <th>类型</th>
+                        <th>厂商</th>
+                        <th>型号</th>
+                        <th>位置</th>
+                        <th>端口</th>
+                        <th>最后检查</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="deviceTable">
+                    {% for device in devices %}
+                    <tr data-id="{{ device.id }}">
+                        <td>
+                            <span class="status-badge {{ device_status[device.status].class if device.status in device_status else 'secondary' }}">
+                                {{ device_status[device.status].label if device.status in device_status else '未知' }}
+                            </span>
+                        </td>
+                        <td>
+                            <strong>{{ device.name }}</strong>
+                            {% if device.sys_descr %}
+                            <br><small class="text-muted">{{ device.sys_descr[:50] }}...</small>
+                            {% endif %}
+                        </td>
+                        <td>{{ device.ip_address }}</td>
+                        <td>{{ device_types[device.device_type] if device.device_type in device_types else device.device_type }}</td>
+                        <td>{{ vendors[device.vendor] if device.vendor in vendors else device.vendor }}</td>
+                        <td>{{ device.model or '-' }}</td>
+                        <td>{{ device.location or '-' }}</td>
+                        <td>
+                            <span class="badge bg-success">{{ device.up_port_count or 0 }}</span>
+                            <span class="text-muted">/ {{ device.port_count or 0 }}</span>
+                        </td>
+                        <td>{{ device.last_check[:16] if device.last_check else '从未' }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" onclick="checkDevice({{ device.id }})" title="立即检查">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button class="btn btn-outline-info" onclick="viewPorts({{ device.id }})" title="查看端口">
+                                    <i class="bi bi-ethernet"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" onclick="editDevice({{ device.id }})" title="编辑">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteDevice({{ device.id }})" title="删除">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="10" class="text-center py-5">
+                            <i class="bi bi-inbox text-muted fs-1"></i>
+                            <p class="text-muted mt-2">暂无设备，点击"添加设备"开始</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 添加/编辑设备模态框 -->
+<div class="modal fade" id="deviceModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">添加设备</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="deviceForm">
+                    <input type="hidden" id="deviceId">
+                    
+                    <!-- 基本信息 -->
+                    <h6 class="mb-3 text-primary"><i class="bi bi-info-circle me-2"></i>基本信息</h6>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">设备名称 *</label>
+                            <input type="text" class="form-control" id="name" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">IP地址 *</label>
+                            <input type="text" class="form-control" id="ip_address" required 
+                                   pattern="^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">设备类型 *</label>
+                            <select class="form-select" id="device_type" required>
+                                {% for key, label in device_types.items() %}
+                                <option value="{{ key }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">厂商 *</label>
+                            <select class="form-select" id="vendor" required>
+                                {% for key, label in vendors.items() %}
+                                <option value="{{ key }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">型号</label>
+                            <input type="text" class="form-control" id="model" placeholder="如：S5130S-28S-EI">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">位置</label>
+                            <input type="text" class="form-control" id="location" placeholder="如：机房A-机柜01">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">描述</label>
+                            <input type="text" class="form-control" id="description">
+                        </div>
+                    </div>
+                    
+                    <!-- SSH配置（仅用于配置备份） -->
+                    <h6 class="mb-3 mt-4 text-primary"><i class="bi bi-terminal me-2"></i>SSH 配置 <small class="text-muted">(用于配置备份)</small></h6>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">SSH端口</label>
+                            <input type="number" class="form-control" id="ssh_port" value="22">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">用户名</label>
+                            <input type="text" class="form-control" id="ssh_username" placeholder="配置备份时需要">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">密码</label>
+                            <input type="password" class="form-control" id="ssh_password" placeholder="配置备份时需要">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Enable密码</label>
+                            <input type="password" class="form-control" id="ssh_enable_password" placeholder="思科/锐捷设备可选">
+                        </div>
+                    </div>
+                    
+                    <!-- SNMP配置 -->
+                    <h6 class="mb-3 mt-4 text-primary"><i class="bi bi-broadcast me-2"></i>SNMP 配置</h6>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">SNMP版本</label>
+                            <select class="form-select" id="snmp_version">
+                                <option value="v2c">SNMP v2c</option>
+                                <option value="v3">SNMP v3</option>
+                                <option value="v1">SNMP v1</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">SNMP端口</label>
+                            <input type="number" class="form-control" id="snmp_port" value="161">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Community</label>
+                            <input type="text" class="form-control" id="community" value="public">
+                        </div>
+                    </div>
+                    <div id="snmpv3Fields" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">用户名</label>
+                                <input type="text" class="form-control" id="snmp_username">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">认证密钥</label>
+                                <input type="password" class="form-control" id="snmp_auth_key">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">加密密钥</label>
+                                <input type="password" class="form-control" id="snmp_priv_key">
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveDevice()">
+                    <i class="bi bi-check-lg me-2"></i>保存
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 检查结果模态框 -->
+<div class="modal fade" id="checkResultModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">设备检查结果</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="checkResultBody">
+                <!-- 动态内容 -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let deviceModal;
+    let checkResultModal;
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        deviceModal = new bootstrap.Modal(document.getElementById('deviceModal'));
+        checkResultModal = new bootstrap.Modal(document.getElementById('checkResultModal'));
+        
+        // SNMP版本切换
+        document.getElementById('snmp_version').addEventListener('change', function() {
+            const v3Fields = document.getElementById('snmpv3Fields');
+            v3Fields.style.display = this.value === 'v3' ? 'block' : 'none';
+        });
+    });
+    
+    function openAddModal() {
+        document.getElementById('deviceForm').reset();
+        document.getElementById('deviceId').value = '';
+        document.getElementById('modalTitle').textContent = '添加设备';
+        document.getElementById('snmpv3Fields').style.display = 'none';
+        deviceModal.show();
+    }
+    
+    async function editDevice(id) {
+        try {
+            const response = await fetch(`/api/devices/${id}`);
+            const result = await response.json();
+            
+            if (!result.success) {
+                showAlert(result.message, 'danger');
+                return;
+            }
+            
+            const device = result.device;
+            document.getElementById('deviceId').value = device.id;
+            document.getElementById('name').value = device.name;
+            document.getElementById('ip_address').value = device.ip_address;
+            document.getElementById('device_type').value = device.device_type;
+            document.getElementById('vendor').value = device.vendor;
+            document.getElementById('model').value = device.model || '';
+            document.getElementById('location').value = device.location || '';
+            document.getElementById('description').value = device.description || '';
+            // SSH 配置
+            document.getElementById('ssh_port').value = device.ssh_port || 22;
+            document.getElementById('ssh_username').value = device.ssh_username || '';
+            document.getElementById('ssh_password').value = device.ssh_password || '';
+            document.getElementById('ssh_enable_password').value = device.ssh_enable_password || '';
+            // SNMP 配置
+            document.getElementById('snmp_version').value = device.snmp_version || 'v2c';
+            document.getElementById('snmp_port').value = device.snmp_port || 161;
+            document.getElementById('community').value = device.community || 'public';
+            
+            document.getElementById('modalTitle').textContent = '编辑设备';
+            document.getElementById('snmpv3Fields').style.display = 
+                device.snmp_version === 'v3' ? 'block' : 'none';
+            
+            deviceModal.show();
+        } catch (error) {
+            showAlert('获取设备信息失败: ' + error.message, 'danger');
+        }
+    }
+    
+    async function saveDevice() {
+        const id = document.getElementById('deviceId').value;
+        const data = {
+            name: document.getElementById('name').value,
+            ip_address: document.getElementById('ip_address').value,
+            device_type: document.getElementById('device_type').value,
+            vendor: document.getElementById('vendor').value,
+            model: document.getElementById('model').value,
+            location: document.getElementById('location').value,
+            description: document.getElementById('description').value,
+            // SSH 配置（仅用于配置备份）
+            ssh_port: parseInt(document.getElementById('ssh_port').value) || 22,
+            ssh_username: document.getElementById('ssh_username').value,
+            ssh_password: document.getElementById('ssh_password').value,
+            ssh_enable_password: document.getElementById('ssh_enable_password').value,
+            // SNMP 配置（用于监控）
+            snmp_version: document.getElementById('snmp_version').value,
+            snmp_port: parseInt(document.getElementById('snmp_port').value) || 161,
+            community: document.getElementById('community').value,
+            snmp_username: document.getElementById('snmp_username').value,
+            snmp_auth_key: document.getElementById('snmp_auth_key').value,
+            snmp_priv_key: document.getElementById('snmp_priv_key').value,
+        };
+        
+        // 验证必填字段
+        if (!data.name || !data.ip_address || !data.device_type || !data.vendor) {
+            showAlert('请填写必填字段', 'warning');
+            return;
+        }
+        
+        try {
+            const url = id ? `/api/devices/${id}` : '/api/devices';
+            const method = id ? 'PUT' : 'POST';
+            
+            const response = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showAlert(result.message, 'success');
+                deviceModal.hide();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showAlert(result.message, 'danger');
+            }
+        } catch (error) {
+            showAlert('保存失败: ' + error.message, 'danger');
+        }
+    }
+    
+    async function deleteDevice(id) {
+        if (!confirm('确定要删除这个设备吗？')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/devices/${id}`, {
+                method: 'DELETE'
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                showAlert(result.message, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showAlert(result.message, 'danger');
+            }
+        } catch (error) {
+            showAlert('删除失败: ' + error.message, 'danger');
+        }
+    }
+    
+    async function checkDevice(id) {
+        const btn = document.querySelector(`button[onclick="checkDevice(${id})"]`);
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        btn.disabled = true;
+        
+        try {
+            const response = await fetch(`/api/devices/${id}/check`, {
+                method: 'POST'
+            });
+            
+            const result = await response.json();
+            
+            let html = '';
+            if (result.success && result.result) {
+                html += '<div class="mb-3">';
+                html += '<h6>设备状态</h6>';
+                if (result.result.status === 'online') {
+                    html += '<div class="alert alert-success">';
+                    html += '<i class="bi bi-check-circle me-2"></i>在线';
+                    if (result.result.cpu_usage) {
+                        html += '<br><small>CPU: ' + result.result.cpu_usage + '%</small>';
+                    }
+                    if (result.result.mem_usage) {
+                        html += '<br><small>内存: ' + result.result.mem_usage + '%</small>';
+                    }
+                    html += '</div>';
+                } else if (result.result.status === 'offline') {
+                    html += '<div class="alert alert-danger">';
+                    html += '<i class="bi bi-x-circle me-2"></i>离线';
+                    if (result.result.error) {
+                        html += '<br><small>' + result.result.error + '</small>';
+                    }
+                    html += '</div>';
+                } else {
+                    html += '<div class="alert alert-warning">';
+                    html += '<i class="bi bi-question-circle me-2"></i>' + (result.result.status || '未知');
+                    html += '</div>';
+                }
+                html += '</div>';
+                
+                if (result.result.sys_descr) {
+                    html += '<div class="mb-3"><small class="text-muted">系统: ' + (result.result.sys_descr.substring(0, 80) || '') + '</small></div>';
+                }
+            } else {
+                html += '<div class="alert alert-danger">';
+                html += '<i class="bi bi-x-circle me-2"></i>' + (result.message || '检查失败');
+                html += '</div>';
+            }
+            
+            document.getElementById('checkResultBody').innerHTML = html;
+            checkResultModal.show();
+            
+            // 刷新页面以更新状态
+            setTimeout(() => location.reload(), 2000);
+            
+        } catch (error) {
+            showAlert('检查失败: ' + error.message, 'danger');
+        } finally {
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+        }
+    }
+    
+    function viewPorts(deviceId) {
+        window.location.href = `/ports?device_id=${deviceId}`;
+    }
+</script>
+{% endblock %}

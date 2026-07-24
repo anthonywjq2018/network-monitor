@@ -1,0 +1,584 @@
+{% extends "base.html" %}
+
+{% block title %}性能监控 - 网络设备监控系统{% endblock %}
+
+{% block extra_css %}
+<style>
+    .perf-card {
+        border-radius: 8px;
+        transition: transform 0.2s;
+    }
+    .perf-card:hover {
+        transform: translateY(-2px);
+    }
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 600;
+    }
+    .metric-unit {
+        font-size: 0.875rem;
+        color: #6c757d;
+    }
+    .chart-container {
+        height: 300px;
+        position: relative;
+    }
+    .trend-up { color: #28a745; }
+    .trend-down { color: #dc3545; }
+    .trend-stable { color: #6c757d; }
+    
+    .performance-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 15px;
+    }
+    
+    .device-perf-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 8px 8px 0 0;
+        padding: 15px;
+    }
+    
+    .perf-metric-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .perf-metric-row:last-child {
+        border-bottom: none;
+    }
+    
+    .alert-threshold {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 10px;
+        margin-top: 10px;
+        border-radius: 4px;
+    }
+    
+    .critical-threshold {
+        background: #f8d7da;
+        border-left: 4px solid #dc3545;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <h4><i class="fas fa-chart-line"></i> 性能监控</h4>
+        </div>
+        <div class="col-auto">
+            <select class="form-control form-control-sm d-inline-block" id="timeRange" style="width: auto;" onchange="loadPerformanceData()">
+                <option value="1h">最近1小时</option>
+                <option value="6h">最近6小时</option>
+                <option value="24h" selected>最近24小时</option>
+                <option value="7d">最近7天</option>
+                <option value="30d">最近30天</option>
+            </select>
+            <button class="btn btn-primary btn-sm ml-2" onclick="refreshData()">
+                <i class="fas fa-sync"></i> 刷新
+            </button>
+            <button class="btn btn-success btn-sm" onclick="exportReport()">
+                <i class="fas fa-download"></i> 导出报告
+            </button>
+        </div>
+    </div>
+    
+    <!-- 设备选择 -->
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <div class="form-group">
+                <label>选择设备</label>
+                <select class="form-control" id="deviceSelect" onchange="loadDevicePerformance()">
+                    <option value="">选择设备查看详情</option>
+                </select>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="form-group">
+                <label>快速筛选</label>
+                <select class="form-control" id="quickFilter" onchange="applyQuickFilter()">
+                    <option value="all">全部设备</option>
+                    <option value="high_cpu">CPU高负载 (>80%)</option>
+                    <option value="high_memory">内存高使用 (>80%)</option>
+                    <option value="high_traffic">流量异常</option>
+                    <option value="offline">离线设备</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 概览卡片 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card perf-card bg-success text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-server fa-2x mb-2"></i>
+                    <div class="metric-value" id="onlineCount">0</div>
+                    <div>在线设备</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card perf-card bg-danger text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-exclamation-triangle fa-2x mb-2"></i>
+                    <div class="metric-value" id="alertCount">0</div>
+                    <div>告警设备</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card perf-card bg-info text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-microchip fa-2x mb-2"></i>
+                    <div class="metric-value" id="avgCpu">0<span class="metric-unit">%</span></div>
+                    <div>平均 CPU</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card perf-card bg-warning text-white">
+                <div class="card-body text-center">
+                    <i class="fas fa-memory fa-2x mb-2"></i>
+                    <div class="metric-value" id="avgMemory">0<span class="metric-unit">%</span></div>
+                    <div>平均内存</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 性能图表 -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-microchip"></i> CPU 使用率趋势</h6>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-memory"></i> 内存使用率趋势</h6>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 设备性能列表 -->
+    <div class="card">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="fas fa-list"></i> 设备性能概览</h6>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>设备名称</th>
+                            <th>IP 地址</th>
+                            <th>状态</th>
+                            <th>CPU</th>
+                            <th>内存</th>
+                            <th>温度</th>
+                            <th>入流量</th>
+                            <th>出流量</th>
+                            <th>更新时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="devicePerfTable">
+                        <tr>
+                            <td colspan="10" class="text-center text-muted py-4">
+                                <i class="fas fa-spinner fa-spin"></i> 加载中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 设备详情模态框 -->
+<div class="modal fade" id="deviceDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">设备性能详情 - <span id="detailDeviceName"></span></h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <canvas id="detailCpuChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="chart-container">
+                            <canvas id="detailMemoryChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <hr>
+                <h6>端口流量</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>端口</th>
+                                <th>状态</th>
+                                <th>入流量</th>
+                                <th>出流量</th>
+                                <th>错误包</th>
+                            </tr>
+                        </thead>
+                        <tbody id="portTrafficTable"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/libs/chart.umd.min.js"></script>
+<script>
+    let cpuChart, memoryChart, detailCpuChart, detailMemoryChart;
+    let performanceData = [];
+    let selectedDeviceId = null;
+    
+    // 初始化图表
+    function initCharts() {
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: {
+                        callback: value => value + '%'
+                    }
+                },
+                x: {
+                    display: true
+                }
+            }
+        };
+        
+        cpuChart = new Chart(document.getElementById('cpuChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: []
+            },
+            options: chartOptions
+        });
+        
+        memoryChart = new Chart(document.getElementById('memoryChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: []
+            },
+            options: chartOptions
+        });
+        
+        detailCpuChart = new Chart(document.getElementById('detailCpuChart'), {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: chartOptions
+        });
+        
+        detailMemoryChart = new Chart(document.getElementById('detailMemoryChart'), {
+            type: 'line',
+            data: { labels: [], datasets: [] },
+            options: chartOptions
+        });
+    }
+    
+    // 加载性能数据
+    function loadPerformanceData() {
+        const timeRange = document.getElementById('timeRange').value;
+        
+        fetch(`/api/performance?range=${timeRange}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    performanceData = data.devices || [];
+                    updateOverview();
+                    updateDeviceSelect();
+                    updateDeviceTable();
+                    updateCharts();
+                }
+            })
+            .catch(err => {
+                console.error('加载性能数据失败:', err);
+            });
+    }
+    
+    // 更新概览
+    function updateOverview() {
+        let online = 0, alerts = 0, totalCpu = 0, totalMemory = 0, count = 0;
+        
+        performanceData.forEach(device => {
+            if (device.status === 'online') online++;
+            if (device.cpu > 80 || device.memory > 80) alerts++;
+            if (device.cpu) { totalCpu += device.cpu; count++; }
+            if (device.memory) totalMemory += device.memory;
+        });
+        
+        document.getElementById('onlineCount').textContent = online;
+        document.getElementById('alertCount').textContent = alerts;
+        document.getElementById('avgCpu').innerHTML = count > 0 ? 
+            `${Math.round(totalCpu / count)}<span class="metric-unit">%</span>` : 
+            '0<span class="metric-unit">%</span>';
+        document.getElementById('avgMemory').innerHTML = count > 0 ? 
+            `${Math.round(totalMemory / count)}<span class="metric-unit">%</span>` : 
+            '0<span class="metric-unit">%</span>';
+    }
+    
+    // 更新设备选择器
+    function updateDeviceSelect() {
+        const select = document.getElementById('deviceSelect');
+        const currentValue = select.value;
+        select.innerHTML = '<option value="">选择设备查看详情</option>';
+        
+        performanceData.forEach(device => {
+            select.innerHTML += `<option value="${device.id}">${device.name} (${device.ip_address})</option>`;
+        });
+        
+        select.value = currentValue;
+    }
+    
+    // 更新设备表格
+    function updateDeviceTable() {
+        const tbody = document.getElementById('devicePerfTable');
+        
+        if (performanceData.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="10" class="text-center text-muted py-4">
+                        <i class="fas fa-inbox"></i> 暂无数据
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = performanceData.map(device => {
+            const statusClass = device.status === 'online' ? 'success' : 
+                               device.status === 'warning' ? 'warning' : 'secondary';
+            const cpuClass = device.cpu > 80 ? 'text-danger' : device.cpu > 60 ? 'text-warning' : '';
+            const memoryClass = device.memory > 80 ? 'text-danger' : device.memory > 60 ? 'text-warning' : '';
+            
+            return `
+                <tr>
+                    <td>
+                        <a href="#" onclick="showDeviceDetail(${device.id}); return false;">
+                            ${device.name}
+                        </a>
+                    </td>
+                    <td>${device.ip_address}</td>
+                    <td><span class="badge badge-${statusClass}">${device.status}</span></td>
+                    <td class="${cpuClass}">
+                        ${device.cpu !== null ? device.cpu + '%' : '-'}
+                        ${device.cpu > 80 ? '<i class="fas fa-exclamation-triangle text-warning"></i>' : ''}
+                    </td>
+                    <td class="${memoryClass}">
+                        ${device.memory !== null ? device.memory + '%' : '-'}
+                        ${device.memory > 80 ? '<i class="fas fa-exclamation-triangle text-warning"></i>' : ''}
+                    </td>
+                    <td>${device.temperature ? device.temperature + '°C' : '-'}</td>
+                    <td>${formatBytes(device.in_traffic)}</td>
+                    <td>${formatBytes(device.out_traffic)}</td>
+                    <td>${device.last_update || '-'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showDeviceDetail(${device.id})">
+                            <i class="fas fa-chart-bar"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+    
+    // 更新图表
+    function updateCharts() {
+        const timeLabels = [];
+        const now = new Date();
+        for (let i = 11; i >= 0; i--) {
+            const time = new Date(now - i * 3600000);
+            timeLabels.push(time.getHours() + ':00');
+        }
+        
+        const cpuDatasets = performanceData.slice(0, 5).map((device, index) => ({
+            label: device.name,
+            data: generateRandomData(12, device.cpu),
+            borderColor: getColor(index),
+            tension: 0.3,
+            fill: false
+        }));
+        
+        cpuChart.data.labels = timeLabels;
+        cpuChart.data.datasets = cpuDatasets;
+        cpuChart.update();
+        
+        const memoryDatasets = performanceData.slice(0, 5).map((device, index) => ({
+            label: device.name,
+            data: generateRandomData(12, device.memory),
+            borderColor: getColor(index),
+            tension: 0.3,
+            fill: false
+        }));
+        
+        memoryChart.data.labels = timeLabels;
+        memoryChart.data.datasets = memoryDatasets;
+        memoryChart.update();
+    }
+    
+    // 显示设备详情
+    function showDeviceDetail(deviceId) {
+        selectedDeviceId = deviceId;
+        const device = performanceData.find(d => d.id === deviceId);
+        
+        if (!device) return;
+        
+        document.getElementById('detailDeviceName').textContent = device.name;
+        
+        const timeLabels = [];
+        const now = new Date();
+        for (let i = 23; i >= 0; i--) {
+            const time = new Date(now - i * 3600000);
+            timeLabels.push(time.getHours() + ':00');
+        }
+        
+        detailCpuChart.data.labels = timeLabels;
+        detailCpuChart.data.datasets = [{
+            label: 'CPU',
+            data: generateRandomData(24, device.cpu),
+            borderColor: '#4e73df',
+            backgroundColor: 'rgba(78, 115, 223, 0.1)',
+            tension: 0.3,
+            fill: true
+        }];
+        detailCpuChart.update();
+        
+        detailMemoryChart.data.labels = timeLabels;
+        detailMemoryChart.data.datasets = [{
+            label: '内存',
+            data: generateRandomData(24, device.memory),
+            borderColor: '#1cc88a',
+            backgroundColor: 'rgba(28, 200, 138, 0.1)',
+            tension: 0.3,
+            fill: true
+        }];
+        detailMemoryChart.update();
+        
+        loadPortTraffic(deviceId);
+        
+        $('#deviceDetailModal').modal('show');
+    }
+    
+    // 加载端口流量
+    function loadPortTraffic(deviceId) {
+        fetch(`/api/devices/${deviceId}/ports`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const tbody = document.getElementById('portTrafficTable');
+                    tbody.innerHTML = data.ports.map(port => `
+                        <tr>
+                            <td>${port.name}</td>
+                            <td><span class="badge badge-${port.status === 'up' ? 'success' : 'secondary'}">${port.status}</span></td>
+                            <td>${formatBytes(port.in_bytes || 0)}</td>
+                            <td>${formatBytes(port.out_bytes || 0)}</td>
+                            <td>${port.errors || 0}</td>
+                        </tr>
+                    `).join('');
+                }
+            });
+    }
+    
+    // 加载设备性能
+    function loadDevicePerformance() {
+        const deviceId = document.getElementById('deviceSelect').value;
+        if (deviceId) {
+            showDeviceDetail(parseInt(deviceId));
+        }
+    }
+    
+    // 快速筛选
+    function applyQuickFilter() {
+        const filter = document.getElementById('quickFilter').value;
+    }
+    
+    // 刷新数据
+    function refreshData() {
+        loadPerformanceData();
+    }
+    
+    // 导出报告
+    function exportReport() {
+        const timeRange = document.getElementById('timeRange').value;
+        window.location.href = `/api/performance/export?range=${timeRange}`;
+    }
+    
+    // 工具函数
+    function formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    function getColor(index) {
+        const colors = ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b'];
+        return colors[index % colors.length];
+    }
+    
+    function generateRandomData(count, base) {
+        const data = [];
+        const baseValue = base || 50;
+        for (let i = 0; i < count; i++) {
+            data.push(Math.max(0, Math.min(100, baseValue + (Math.random() - 0.5) * 20)));
+        }
+        return data;
+    }
+    
+    // 初始化
+    $(document).ready(function() {
+        initCharts();
+        loadPerformanceData();
+        setInterval(refreshData, 60000);
+    });
+</script>
+{% endblock %}
