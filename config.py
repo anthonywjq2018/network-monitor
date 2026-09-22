@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 网络设备监控系统 - 数据配置模板
-版本: v0.0.12
+版本: v0.0.13
 功能: SNMP监控、每10秒自动检查、端口本地备注管理、端口Down实时告警、添加设备自动获取端口
 """
 
 from datetime import datetime
 
 # ==================== 版本信息 ====================
-VERSION = "0.0.12"
+VERSION = "0.0.13"
 VERSION_DATE = "2026-04-28"
 TEMPLATE_VERSION = "2.1.2"
 
